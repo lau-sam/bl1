@@ -86,6 +86,10 @@ class TrainingConfig:
     # External drive
     I_noise_amplitude: float = 3.0
 
+    # Adaptive noise: scale I_noise_amplitude based on target firing rate.
+    # Fixes the FR floor problem where the network can't reach low targets.
+    auto_noise: bool = True
+
     seed: int = 42
 
 
@@ -341,6 +345,19 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
     """
     if config is None:
         config = TrainingConfig()
+
+    # Auto-noise: scale I_noise_amplitude based on target firing rate.
+    # Empirical relationship: at the default init_weight_scale=0.1,
+    # noise_amp ≈ target_fr * 1.5 + 0.5 puts the network in the right
+    # operating regime. This was calibrated against Sharf organoid targets
+    # (0.03-0.86 Hz) and Wagenaar targets (1-5 Hz).
+    noise_amp = config.I_noise_amplitude
+    if config.auto_noise:
+        noise_amp = config.target_firing_rate_hz * 1.5 + 0.5
+        noise_amp = max(min(noise_amp, 15.0), 0.3)  # clamp to [0.3, 15]
+        print(f"Auto-noise: I_noise_amplitude = {noise_amp:.2f} "
+              f"(target FR = {config.target_firing_rate_hz:.2f} Hz)")
+
     print(f"Building network: {config.n_neurons} neurons, E/I ratio {config.ei_ratio:.1%}")
     t0 = time.time()
 
@@ -403,7 +420,7 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
         epoch_t0 = time.time()
 
         rng, key_noise, key_state = jax.random.split(rng, 3)
-        I_external = config.I_noise_amplitude * jax.random.normal(
+        I_external = noise_amp * jax.random.normal(
             key_noise, shape=(n_steps, config.n_neurons)
         )
 

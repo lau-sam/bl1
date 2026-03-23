@@ -78,6 +78,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # External drive
     p.add_argument("--I-noise-amplitude", type=float, default=5.0,
                     help="Amplitude of external noise current.")
+    p.add_argument("--auto-noise", action="store_true", default=True,
+                    help="Scale noise amplitude based on target FR (default: on)")
+    p.add_argument("--no-auto-noise", dest="auto_noise", action="store_false",
+                    help="Disable adaptive noise scaling")
 
     # Real data
     p.add_argument("--from-recording", type=str, default=None,
@@ -174,6 +178,7 @@ def main(argv: list[str] | None = None) -> None:
         g_exc_init=args.g_exc_init,
         g_inh_init=args.g_inh_init,
         I_noise_amplitude=args.I_noise_amplitude,
+        auto_noise=args.auto_noise,
         seed=args.seed,
     )
 
