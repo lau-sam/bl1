@@ -2,9 +2,10 @@
 #SBATCH --job-name=bl1-sharf
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/data/datasets/bl1/results/sharf_2022/slurm_logs/%x_%A_%a.out
 #SBATCH --error=/data/datasets/bl1/results/sharf_2022/slurm_logs/%x_%A_%a.err
 # ---------------------------------------------------------------------------
