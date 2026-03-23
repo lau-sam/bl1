@@ -162,3 +162,92 @@ python scripts/nsg_submit.py --download JOB_ID  # get results
 ```
 
 Tool: `GPU_PY_EXPANSE` (Python on Expanse GPUs, V100s)
+
+## Slurm (Local DGX Spark)
+
+```bash
+# Submit per-recording training array (33 jobs)
+sbatch --array=0-32 scripts/slurm_train_sharf.sh
+
+# Submit pooled condition training
+sbatch --job-name=bl1-pool-baseline --partition=gpu --gres=gpu:1 --mem=32G --time=02:00:00 \
+  --wrap=".venv/bin/python scripts/train_pooled.py --condition baseline"
+
+# Monitor
+squeue -o "%.8i %.20j %.4t %.10M %R"
+```
+
+## Related Work & Collaboration Opportunities
+
+### DANDI AI Notebooks (Magland et al. 2025)
+
+Paper: "Facilitating analysis of open neurophysiology data on the DANDI Archive
+using large language model tools" (bioRxiv 2025.07.17.663965v3)
+
+They built LLM-powered tools for automated DANDI dataset exploration and notebook
+generation. GPT-4.1 for chat exploration, Claude Sonnet 4 for notebook generation.
+Cost: ~$1.15/notebook. Tested on 12 datasets with expert review.
+
+**Code:**
+- Notebook generator: https://github.com/dandi-ai-notebooks/dandi-ai-notebooks-study
+- Dandiset Explorer: https://github.com/dandi-ai-notebooks/dandiset-explorer
+- Generated notebooks: https://zenodo.org/records/16033603
+
+**Gaps where BL-1 can contribute (see below).**
+
+### Virtual Brain Projects (TVB)
+
+- **tvboptim** (https://github.com/virtual-twin/tvboptim): JAX brain network simulation
+  with gradient-based optimization. Wong-Wang, Jansen-Rit, Epileptor models. Uses optax.
+  Relevant: `Parameter()` marking system, BOLD monitor, diffrax integration.
+- **vbjax** (https://github.com/ins-amu/vbjax): Lean JAX toolkit for virtual brain
+  modeling. Euler/Heun/RK4 integrators, custom_vjp sparse matmul, delay helpers,
+  BOLD/EEG monitors. Relevant: differentiable sparse ops, Heun integration.
+
+### Beggs Lab (Indiana University)
+
+John Beggs — discoverer of neuronal avalanches (Beggs & Plenz 2003). Book: "The Cortex
+and the Critical Point" (MIT Press 2022, open access). BL-1 validates against his
+published criticality metrics (branching ratio, -3/2 exponent). The criticality sweep
+notebook (notebooks/03_criticality_sweep.ipynb) demonstrates his theory in BL-1.
+
+## Contribution Gaps: DANDI AI Notebooks x BL-1
+
+The Magland et al. pipeline has specific gaps that BL-1 addresses:
+
+### 1. No simulation comparison (biggest gap)
+Their notebooks show real data but never compare to a model. BL-1 can generate
+a "simulated counterpart" for any DANDI cortical culture recording — run a matched
+simulation with extracted targets and produce side-by-side rasters/statistics.
+This transforms their descriptive notebooks into model-validation notebooks.
+
+### 2. No MEA-specific analysis
+Their tool is generic across all NWB datasets. For cortical culture MEA data
+specifically, BL-1 has specialized analysis: burst detection (Wagenaar method),
+criticality metrics, STP dynamics, E/I balance estimation. These could be
+contributed as "domain plugins" for their notebook generator.
+
+### 3. Spike time format issues unhandled
+We discovered that DANDI 001611 stores spike times as sample indices (not seconds)
+and Sharf 2022 uses compound HDF5 datasets. Their pipeline likely hits the same
+issues. Our activity-window-aware loading and format auto-detection could be
+contributed upstream to pynwb or to their inspection tools.
+
+### 4. No differentiable fitting
+Their notebooks are read-only analysis. BL-1's training pipeline could be
+integrated: after exploring a dataset, the agent generates a training script
+that fits BL-1 weights to match the recording's statistics. This is the
+"analysis → model → prediction" loop that their system lacks.
+
+### 5. Cost/scale mismatch
+Their pipeline costs $1.15/notebook but relies on cloud LLMs. BL-1's analysis
+runs locally on GPU at zero marginal cost. Combining their LLM exploration with
+BL-1's local GPU analysis could reduce per-dataset cost while adding simulation.
+
+### Concrete contribution plan
+1. Submit BL-1's MEA analysis functions as a PR to their notebook generator
+2. Add a "simulation comparison" template that their agent can use for
+   cortical culture datasets
+3. Upstream our NWB loading fixes (sample-index detection, compound datasets)
+   to pynwb or their get_nwbfile_info tool
+4. Propose a joint notebook: "From DANDI recording to fitted BL-1 simulation"
