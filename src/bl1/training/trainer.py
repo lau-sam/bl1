@@ -346,27 +346,41 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
     if config is None:
         config = TrainingConfig()
 
-    # Auto-noise: scale I_noise_amplitude based on target firing rate.
-    # Empirical relationship: at the default init_weight_scale=0.1,
-    # noise_amp ≈ target_fr * 1.5 + 0.5 puts the network in the right
-    # operating regime. This was calibrated against Sharf organoid targets
-    # (0.03-0.86 Hz) and Wagenaar targets (1-5 Hz).
+    # Auto-noise: scale I_noise_amplitude and init_weight_scale based on
+    # target firing rate. Calibrated via autoresearch_fr_sweep.py across
+    # 6 target FRs (0.1-5.0 Hz), 30 configs each, all sweeps SUCCESS.
+    #
+    # Two regimes:
+    #   Low FR (<1 Hz):  ws=0.05, noise = target*5.0 + 0.3
+    #   High FR (>=1 Hz): ws=0.50, noise = target*1.0 + 0.3
     noise_amp = config.I_noise_amplitude
+    weight_scale = config.init_weight_scale
     if config.auto_noise:
-        noise_amp = config.target_firing_rate_hz * 1.5 + 0.5
-        noise_amp = max(min(noise_amp, 15.0), 0.3)  # clamp to [0.3, 15]
-        print(f"Auto-noise: I_noise_amplitude = {noise_amp:.2f} "
-              f"(target FR = {config.target_firing_rate_hz:.2f} Hz)")
+        if config.target_firing_rate_hz < 1.0:
+            noise_amp = config.target_firing_rate_hz * 5.0 + 0.3
+            weight_scale = 0.05
+        else:
+            noise_amp = config.target_firing_rate_hz * 1.0 + 0.3
+            weight_scale = 0.50
+        noise_amp = max(min(noise_amp, 15.0), 0.3)
+        print(f"Auto-noise: I_noise={noise_amp:.2f}, ws={weight_scale:.2f} "
+              f"(target FR={config.target_firing_rate_hz:.2f} Hz)")
 
     print(f"Building network: {config.n_neurons} neurons, E/I ratio {config.ei_ratio:.1%}")
     t0 = time.time()
 
     params, init_state_template, W_exc, W_inh, exc_mask, inh_mask = _build_network(config)
 
+    # Apply auto-noise weight scale override (rescale from config default to sweep-optimal)
+    if config.auto_noise and weight_scale != config.init_weight_scale:
+        rescale = weight_scale / config.init_weight_scale
+        W_exc = W_exc * rescale
+        W_inh = W_inh * rescale
+
     n_exc = int(jnp.sum(exc_mask > 0))
     n_inh = int(jnp.sum(inh_mask > 0))
-    print(f"  Excitatory synapses: {n_exc:,}  (scaled {config.init_weight_scale}x)")
-    print(f"  Inhibitory synapses: {n_inh:,}  (scaled {config.init_weight_scale}x)")
+    print(f"  Excitatory synapses: {n_exc:,}  (scaled {weight_scale}x)")
+    print(f"  Inhibitory synapses: {n_inh:,}  (scaled {weight_scale}x)")
     print(f"  Max weight: {config.max_weight}")
     print(f"  Surrogate beta: {config.surrogate_beta}")
     print(f"  Network built in {time.time() - t0:.1f}s")
