@@ -111,30 +111,66 @@ Training converges to ~0.178 Hz regardless of target. Root cause: with `init_wei
 | `scripts/train_all_sharf.py` | Batch training with trackio |
 | `configs/wagenaar_calibrated.yaml` | Validated simulation parameters |
 
-## Autoresearch Experiment Loop
+## Autoresearch: Current Priority
 
-For autonomous agents iterating on the training pipeline:
+**The #1 problem is FR convergence.** Training achieves ~31% of target FR across
+all recordings. The auto-noise fix helped (broke the 0.18 Hz floor) but
+`init_weight_scale=0.1` keeps the network too quiet.
 
-```
-1. Pick a recording from /data/datasets/bl1/zenodo_sharf_2022/
-2. Extract targets: python scripts/analyze_all_datasets.py
-3. Hypothesize a parameter change (noise, weight scale, LR, sim duration)
-4. Run: python scripts/train_culture.py \
-     --from-recording /data/.../recording.h5 \
-     --n-neurons 5000 --n-epochs 50 --sim-duration-ms 500
-5. Check: does final_fr match target_fr within 20%?
-6. If gap > 20%: adjust hypothesis, go to 3
-7. If gap < 20%: extend to 100 epochs, try longer sim-duration-ms
-8. Run validation: bash scripts/run_validation.sh --quick
-9. If passing: commit and push
+### Step 1: Run the FR sweep (automated, ~30 min)
+
+```bash
+python scripts/autoresearch_fr_sweep.py --target-fr 0.3
 ```
 
-**Guardrails:**
+This sweeps `init_weight_scale` (0.05-0.5) x `noise_mult` (1.0-5.0) x 4 target FRs.
+Exit code 0 = found a config with >70% FR ratio. Exit code 1 = need more exploration.
+
+Check `/data/datasets/bl1/results/autoresearch/fr_sweep/` for results JSON.
+
+### Step 2: Apply the best config
+
+If the sweep finds a good config (e.g., `init_weight_scale=0.3, noise_mult=2.0`):
+1. Update the defaults in `TrainingConfig` in `src/bl1/training/trainer.py`
+2. Re-run one recording to verify:
+   ```bash
+   python scripts/train_culture.py --from-recording \
+     /data/datasets/bl1/zenodo_sharf_2022/7month_2950.raw.h5 \
+     --n-neurons 5000 --n-epochs 100 --sim-duration-ms 500
+   ```
+3. Check: `Final firing rate` should be within 30% of target
+4. Run validation: `bash scripts/run_validation.sh --quick`
+5. If validation passes: commit, push, re-run batch via Slurm:
+   ```bash
+   sbatch --array=0-32 scripts/slurm_train_sharf.sh
+   ```
+
+### Step 3: Extend to burst matching
+
+Once FR converges (>70% ratio), increase sim duration for burst detection:
+```bash
+python scripts/train_culture.py --from-recording FILE.h5 \
+  --n-neurons 5000 --n-epochs 100 --sim-duration-ms 5000
+```
+This triggers a new JIT compilation (~15 min) but enables burst-rate optimization.
+
+### Success Criteria
+
+| Metric | Threshold | How to check |
+|--------|-----------|-------------|
+| FR ratio (sim/target) | > 70% | `grep "Final firing" slurm_logs/*.out` |
+| Bio-validation | 6/6 Wagenaar | `bash scripts/run_validation.sh --quick` |
+| Tests | 536 pass | `make test` |
+| No NaN | 0 NaN epochs | Check training log for `[NaN-protected]` |
+
+### Guardrails
+
 - `make test` must pass (536 tests) before any commit
 - Bio-validation must remain 6/6 on Wagenaar metrics
 - Never modify `configs/wagenaar_calibrated.yaml` without re-running full validation
 - Results go to `/data/datasets/bl1/results/` (NAS), not local `results/`
-- Use trackio for all training runs: `trackio.init(project="bl1-...", dir="/data/.../trackio")`
+- Use trackio for all training runs
+- Submit batch jobs via Slurm (`sbatch`), not serial Python
 
 ## GPU Performance
 
