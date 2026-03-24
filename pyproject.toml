@@ -41,6 +41,9 @@ jaxley = [
 nwb = [
     "pynwb>=2.0",
 ]
+spikeinterface = [
+    "spikeinterface[full]>=0.101",
+]
 vizdoom = [
     "vizdoom>=1.2.0",
 ]
