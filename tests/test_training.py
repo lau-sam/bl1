@@ -240,7 +240,7 @@ class TestTrainStep:
         )
 
         # Build network
-        params, init_state_template, W_exc, W_inh, exc_mask, inh_mask = (
+        params, init_state_template, W_exc, W_inh, exc_mask, inh_mask, _is_exc = (
             _build_network(config)
         )
         n_steps = int(config.sim_duration_ms / config.dt)
@@ -339,7 +339,7 @@ class TestTrainWeights:
         config = _tiny_config()
 
         # Build network to get original masks
-        _, _, W_exc_orig, W_inh_orig, exc_mask, inh_mask = _build_network(config)
+        _, _, W_exc_orig, W_inh_orig, exc_mask, inh_mask, _ = _build_network(config)
 
         # Train
         result = train_weights(config)
@@ -371,7 +371,7 @@ class TestGradientFlow:
         )
 
         # Build network
-        params, init_state_template, W_exc, W_inh, exc_mask, inh_mask = (
+        params, init_state_template, W_exc, W_inh, exc_mask, inh_mask, _is_exc = (
             _build_network(config)
         )
         n_steps = int(config.sim_duration_ms / config.dt)

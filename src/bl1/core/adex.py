@@ -197,7 +197,7 @@ def create_adex_population(
     # Initial state: v at leak reversal, w = 0, no spikes
     v = jnp.full(n_neurons, _CELL_TYPES["RS"]["E_L"])
     w = jnp.zeros(n_neurons)
-    spikes = jnp.zeros(n_neurons, dtype=jnp.bool_)
+    spikes = jnp.zeros(n_neurons, dtype=jnp.float32)
     state = AdExState(v=v, w=w, spikes=spikes)
 
     # Excitatory mask — first n_exc neurons are excitatory
@@ -257,7 +257,7 @@ def adex_step(
     v_new = jnp.where(spiked, V_reset, v_new)
     w_new = jnp.where(spiked, w_new + b, w_new)
 
-    return AdExState(v=v_new, w=w_new, spikes=spiked)
+    return AdExState(v=v_new, w=w_new, spikes=spiked.astype(jnp.float32))
 
 
 # ---------------------------------------------------------------------------

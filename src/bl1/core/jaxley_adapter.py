@@ -237,7 +237,7 @@ class JaxleyNetwork:
         # Default resting potential (mV) for HH channels
         v_rest = -65.0
         voltages = jnp.full((n, n_comp), v_rest)
-        spikes = jnp.zeros(n, dtype=jnp.bool_)
+        spikes = jnp.zeros(n, dtype=jnp.float32)
 
         # Build Jaxley-internal state pytree.
         # Implementation requires Jaxley — typically obtained via
@@ -339,12 +339,12 @@ class JaxleyNetwork:
             sub-steps.
         """
         dt = self.config.dt_ms
-        any_spikes = jnp.zeros(self.config.n_neurons, dtype=jnp.bool_)
+        any_spikes = jnp.zeros(self.config.n_neurons, dtype=jnp.float32)
 
         def _body(carry, _):
             s, acc_spikes = carry
             s, spikes = self.step(s, I_ext, dt=dt)
-            acc_spikes = acc_spikes | spikes
+            acc_spikes = jnp.maximum(acc_spikes, spikes)
             return (s, acc_spikes), None
 
         (state, any_spikes), _ = jax.lax.scan(

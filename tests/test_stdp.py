@@ -85,7 +85,7 @@ class TestTraceIncrementOnSpike:
         is_exc = _all_excitatory(n)
 
         # Neuron 3 fires
-        spikes = jnp.zeros(n, dtype=jnp.bool_).at[3].set(True)
+        spikes = jnp.zeros(n, dtype=jnp.float32).at[3].set(1.0)
         new_state, _ = stdp_update(state, params, spikes, W, is_exc)
 
         # Traces start at 0, decay is identity for 0, then increment by A_plus / A_minus

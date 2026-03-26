@@ -340,7 +340,7 @@ class Neurons:
             if electrode_idx in self.forbidden_channels:
                 continue
             neurons_near = ne_map_np[electrode_idx]
-            n_spikes = int(np.sum(spikes_np & neurons_near))
+            n_spikes = int(np.sum(spikes_np.astype(bool) & neurons_near))
             for _ in range(n_spikes):
                 spike_events.append(SpikeEvent(channel=electrode_idx, timestamp=self._current_time))
 

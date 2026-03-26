@@ -723,7 +723,7 @@ class TestNetworkParamsAndCultureState:
         state = CultureState(
             v=jnp.zeros(N),
             u=jnp.zeros(N),
-            spikes=jnp.zeros(N, dtype=jnp.bool_),
+            spikes=jnp.zeros(N, dtype=jnp.float32),
             g_ampa=jnp.zeros(N),
             g_gaba_a=jnp.zeros(N),
             stdp_pre_trace=jnp.zeros(N),

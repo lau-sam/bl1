@@ -2,10 +2,12 @@ BL-1: In-Silico Cortical Culture Simulator
 ==========================================
 
 **BL-1** is a JAX-based framework for simulating dissociated cortical
-cultures on multi-electrode arrays (MEAs), inspired by the DishBrain system
-(Kagan et al. 2022).  It provides everything you need to build, run, and
-analyse virtual cortical cultures -- from single-neuron dynamics to
-closed-loop game-playing experiments.
+cultures on multi-electrode arrays (MEAs).  It provides everything you need
+to build, run, and analyse virtual cortical cultures -- from single-neuron
+dynamics to closed-loop game-playing experiments, including an in-silico
+replication of the DishBrain experiment (Kagan et al. 2022), which used
+biological neurons on HD-MEAs to demonstrate that living cortical cultures
+can learn to play Pong.
 
 The simulator models populations of Izhikevich spiking neurons with five
 cortical cell types (RS, IB, CH, FS, LTS) and an 80/20
@@ -28,8 +30,8 @@ dynamics observed in real cortical cultures.
 BL-1 includes a virtual 64-channel MEA for spike detection and LFP
 approximation, a Pong game environment for closed-loop experiments, and a
 controller that orchestrates sensory encoding, motor decoding, and
-feedback stimulation following the DishBrain free-energy-principle
-protocol.  Analysis tools cover burst detection, criticality metrics
+feedback stimulation replicating the free-energy-principle protocol from
+the biological DishBrain experiment.  Analysis tools cover burst detection, criticality metrics
 (branching ratio, avalanche distributions), rally-length statistics, and
 pharmacological modelling.  The entire simulation loop compiles into a
 single XLA program via ``jax.lax.scan``, with no Python-level per-timestep

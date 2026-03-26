@@ -48,7 +48,7 @@ def _make_neurons(n: int, a=0.02, b=0.2, c=-65.0, d=8.0):
     state = NeuronState(
         v=jnp.full(n, V_REST),
         u=jnp.full(n, b * V_REST),
-        spikes=jnp.zeros(n, dtype=jnp.bool_),
+        spikes=jnp.zeros(n, dtype=jnp.float32),
     )
     return params, state
 

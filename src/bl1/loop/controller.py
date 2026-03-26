@@ -520,7 +520,7 @@ class ClosedLoop:
         # Initialise neuron + synapse state
         b = self.neuron_params.b
         v0 = jnp.full(n_neurons, -65.0)
-        neuron_state = NeuronState(v=v0, u=b * v0, spikes=jnp.zeros(n_neurons, dtype=jnp.bool_))
+        neuron_state = NeuronState(v=v0, u=b * v0, spikes=jnp.zeros(n_neurons, dtype=jnp.float32))
         syn_state = create_synapse_state(n_neurons)
 
         # Neuron-electrode map for motor decoding

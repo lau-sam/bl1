@@ -163,7 +163,7 @@ except ImportError:
         b_all = params.b
         v0 = -65.0 * jnp.ones(n_neurons)
         state = _FallbackNeuronState(
-            v=v0, u=b_all * v0, spikes=jnp.zeros(n_neurons, dtype=jnp.bool_)
+            v=v0, u=b_all * v0, spikes=jnp.zeros(n_neurons, dtype=jnp.float32)
         )
         return params, state, is_exc
 
@@ -331,7 +331,7 @@ class Culture:
         state = CultureState(
             v=v0,
             u=u0,
-            spikes=jnp.zeros(N, dtype=jnp.bool_),
+            spikes=jnp.zeros(N, dtype=jnp.float32),
             g_ampa=jnp.zeros(N),
             g_gaba_a=jnp.zeros(N),
             stdp_pre_trace=jnp.zeros(N),

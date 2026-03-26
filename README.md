@@ -4,7 +4,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![JAX](https://img.shields.io/badge/accelerator-JAX-orange)
 
-BL-1 is a JAX-based framework for simulating dissociated cortical cultures growing on multi-electrode arrays (MEAs), inspired by the DishBrain system (Kagan et al. 2022). It combines biologically detailed spiking neuron models with conductance-based synapses, four timescales of synaptic plasticity, virtual MEA recording and stimulation, and closed-loop game experiments -- all within a fully differentiable, JIT-compiled simulation loop built on `jax.lax.scan`. BL-1 enables researchers to run in-silico replications of biological intelligence experiments at scale, with GPU acceleration and support for gradient-based optimization through surrogate gradients.
+BL-1 is a JAX-based framework for simulating dissociated cortical cultures growing on multi-electrode arrays (MEAs). It combines biologically detailed spiking neuron models with conductance-based synapses, four timescales of synaptic plasticity, virtual MEA recording and stimulation, and closed-loop game experiments -- all within a fully differentiable, JIT-compiled simulation loop built on `jax.lax.scan`. BL-1 enables researchers to run in-silico replications of biological intelligence experiments at scale, with GPU acceleration and support for gradient-based optimization through surrogate gradients. The closed-loop game module replicates the DishBrain experiment (Kagan et al. 2022), which grew biological cortical neurons on HD-MEAs and demonstrated that living neural cultures could learn to play Pong via free-energy-principle feedback.
 
 ---
 
@@ -35,7 +35,7 @@ BL-1 is a JAX-based framework for simulating dissociated cortical cultures growi
 - Configurable detection and activation radii
 
 ### Game Environments
-- **Pong** -- closed-loop paddle game with DishBrain-style FEP feedback
+- **Pong** -- closed-loop paddle game replicating the biological DishBrain experiment (Kagan et al. 2022) with FEP feedback
 - **Doom** -- ViZDoom integration for 3D environments (optional `vizdoom` extra)
 - Three feedback modes: Free Energy Principle (`fep`), `open_loop`, `silent`
 
@@ -196,7 +196,7 @@ BL-1 uses YAML configuration files to define experiment parameters. Three refere
 |--------|------|-------------|
 | **Default** | `configs/default.yaml` | 100K neurons, standard Izhikevich parameters, 64-ch MEA |
 | **Wagenaar Calibrated** | `configs/wagenaar_calibrated.yaml` | 5K neurons tuned to reproduce Wagenaar et al. (2006) spontaneous bursting (~8 bursts/min, IBI ~9s) |
-| **DishBrain Pong** | `configs/dishbrain_pong.yaml` | Closed-loop Pong experiment with FEP feedback |
+| **DishBrain Pong** | `configs/dishbrain_pong.yaml` | In-silico replication of the biological DishBrain Pong experiment with FEP feedback |
 
 Load a config:
 

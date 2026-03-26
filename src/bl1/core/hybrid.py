@@ -139,7 +139,7 @@ class HybridPopulation:
             izh_state = NeuronState(
                 v=jnp.array([]),
                 u=jnp.array([]),
-                spikes=jnp.array([], dtype=jnp.bool_),
+                spikes=jnp.array([], dtype=jnp.float32),
             )
             izh_exc = jnp.array([], dtype=jnp.bool_)
 
@@ -162,7 +162,7 @@ class HybridPopulation:
             adex_state = AdExState(
                 v=jnp.array([]),
                 w=jnp.array([]),
-                spikes=jnp.array([], dtype=jnp.bool_),
+                spikes=jnp.array([], dtype=jnp.float32),
             )
             adex_exc = jnp.array([], dtype=jnp.bool_)
 
@@ -187,7 +187,7 @@ class HybridPopulation:
             izh_u=izh_state.u,
             adex_v=adex_state.v,
             adex_w=adex_state.w,
-            spikes=jnp.zeros(n_neurons, dtype=jnp.bool_),
+            spikes=jnp.zeros(n_neurons, dtype=jnp.float32),
         )
 
         return params, state
@@ -204,7 +204,7 @@ def _izh_substep(
     izh_state_in = NeuronState(
         v=izh_v,
         u=izh_u,
-        spikes=jnp.zeros_like(izh_v, dtype=jnp.bool_),
+        spikes=jnp.zeros_like(izh_v, dtype=jnp.float32),
     )
     new_izh = izhikevich_step(izh_state_in, izh_params, I_izh, dt)
     return new_izh.v, new_izh.u, new_izh.spikes
@@ -221,7 +221,7 @@ def _adex_substep(
     adex_state_in = AdExState(
         v=adex_v,
         w=adex_w,
-        spikes=jnp.zeros_like(adex_v, dtype=jnp.bool_),
+        spikes=jnp.zeros_like(adex_v, dtype=jnp.float32),
     )
     new_adex = adex_step(adex_state_in, adex_params, I_adex, dt)
     return new_adex.v, new_adex.w, new_adex.spikes

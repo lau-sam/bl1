@@ -167,7 +167,9 @@ Closed-Loop Pong
 -----------------
 
 BL-1 can connect a cortical culture to a Pong game in a closed-loop
-experiment, replicating the DishBrain protocol.  The ``ClosedLoop``
+experiment, providing an in-silico replication of the biological DishBrain
+experiment (Kagan et al. 2022) in which living neurons on HD-MEAs learned
+to play Pong.  The ``ClosedLoop``
 controller handles sensory encoding, motor decoding, feedback stimulation,
 and STDP-based learning.
 

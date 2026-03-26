@@ -6,8 +6,10 @@ inhibitory weight matrices toward Wagenaar 2006 cortical culture targets.
 Numerical stability design:
   - ``optax.apply_if_finite`` skips updates when gradients contain NaN/inf
   - Log-scale firing rate loss prevents gradient explosion at high rates
-  - Differentiable burst proxy via population rate variance (not threshold
-    crossings, which kill gradients)
+  - Differentiable burst rate loss via tanh-based peak detection on
+    Gaussian-smoothed population rate (from ``bl1.training.loss``)
+  - Short-term plasticity (STP) in the forward pass for burst generation
+    via synaptic depression (Tsodyks-Markram)
   - Per-element weight clamping with configurable max
   - Configurable surrogate beta (lower = smoother gradients for long scans)
 
@@ -34,6 +36,8 @@ from bl1.core.integrator import SimulationResult, simulate
 from bl1.core.izhikevich import IzhikevichParams, NeuronState, create_population
 from bl1.core.synapses import SynapseState, create_synapse_state
 from bl1.network.topology import build_connectivity, place_neurons
+from bl1.plasticity.stp import STPParams, create_stp_params
+from bl1.training.loss import burst_rate_loss
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -48,7 +52,7 @@ class TrainingConfig:
     ei_ratio: float = 0.8
 
     # Simulation
-    sim_duration_ms: float = 2000.0  # 2 seconds per training step
+    sim_duration_ms: float = 5000.0  # 5 seconds per training step (burst detection)
     dt: float = 0.5
 
     # Optimizer
@@ -61,7 +65,7 @@ class TrainingConfig:
 
     # Loss weights
     w_firing_rate: float = 1.0
-    w_burst_rate: float = 0.1  # low weight — burst proxy has noisy gradients
+    w_burst_rate: float = 0.5  # burst matching is a primary training objective
     w_synchrony: float = 0.5
     w_weight_reg: float = 0.01
 
@@ -74,8 +78,14 @@ class TrainingConfig:
     g_exc_init: float = 0.12
     g_inh_init: float = 0.36
 
-    # Training runs WITHOUT STP, so weights must be smaller to avoid seizure.
-    init_weight_scale: float = 0.1
+    # With STP enabled, synaptic depression provides natural gain control,
+    # so weights can be larger than the old no-STP regime (was 0.1).
+    init_weight_scale: float = 0.3
+
+    # Short-term plasticity (Tsodyks-Markram)
+    use_stp: bool = True
+    U_exc: float = 0.30   # baseline release probability (excitatory)
+    tau_rec: float = 800.0  # recovery time constant in ms
 
     # Weight clamping
     max_weight: float = 0.5  # max absolute weight value
@@ -123,7 +133,8 @@ def culture_loss(
 
     All loss components are designed to have well-behaved gradients:
       1. Log-scale firing rate loss (prevents explosion at high rates)
-      2. Differentiable burst proxy via population rate variance
+      2. Differentiable burst rate loss via tanh-based peak detection
+         (from ``bl1.training.loss.burst_rate_loss``)
       3. Synchrony penalty via CV deviation
       4. L2 weight regularisation (sparse-aware)
     """
@@ -140,28 +151,19 @@ def culture_loss(
     log_target = jnp.log(config.target_firing_rate_hz + 0.01)
     loss_fr = (log_fr - log_target) ** 2
 
-    # --- 2. Burst rate proxy (differentiable) ---
-    # Instead of counting threshold crossings (zero gradient), use the
-    # variance of the population rate in time windows as a proxy.
-    # High variance = bursty. Target: moderate burstiness.
-    pop_count = jnp.sum(spike_history, axis=1)  # (T,)
-
-    # Compute windowed variance (50ms windows)
-    window_steps = max(int(50.0 / config.dt), 1)
-    n_windows = T // window_steps
-    if n_windows > 1:
-        windowed = pop_count[: n_windows * window_steps].reshape(n_windows, window_steps)
-        window_means = jnp.mean(windowed, axis=1)
-        # Normalized variance: var(window_means) / (mean + eps)^2 = CV^2
-        w_mean = jnp.mean(window_means) + 1e-6
-        w_var = jnp.var(window_means)
-        # Target CV^2 ~ 1.0 for bursty activity
-        burst_cv2 = w_var / (w_mean ** 2)
-        loss_burst = (burst_cv2 - 1.0) ** 2
-    else:
-        loss_burst = jnp.float32(0.0)
+    # --- 2. Burst rate loss (tanh-based differentiable peak detection) ---
+    # Uses the proper burst_rate_loss from loss.py with Gaussian-smoothed
+    # population rate and soft threshold crossings, replacing the old CV^2
+    # proxy which had poor gradient signal for actual burst generation.
+    loss_burst = burst_rate_loss(
+        spike_history,
+        target_bursts_per_min=config.target_burst_rate_per_min,
+        dt=config.dt,
+    )
 
     # Also compute the non-differentiable burst count for logging
+    pop_count = jnp.sum(spike_history, axis=1)  # (T,)
+    window_steps = max(int(50.0 / config.dt), 1)
     kernel = jnp.ones(window_steps) / window_steps
     pop_smooth = jnp.convolve(pop_count, kernel, mode="same")
     mean_pop = jnp.mean(pop_smooth)
@@ -212,6 +214,7 @@ def _make_loss_fn(
     syn_state: SynapseState,
     I_external: Array,
     config: TrainingConfig,
+    stp_params: STPParams | None = None,
 ):
     """Return a closure that maps (W_exc, W_inh) -> (loss, components)."""
 
@@ -226,6 +229,7 @@ def _make_loss_fn(
             I_external=I_external,
             dt=config.dt,
             plasticity_fn=None,
+            stp_params=stp_params,
             surrogate=True,
             surrogate_beta=config.surrogate_beta,
         )
@@ -248,9 +252,10 @@ def _train_step(
     optimizer: optax.GradientTransformation,
     exc_mask: Array,
     inh_mask: Array,
+    stp_params: STPParams | None = None,
 ) -> tuple[Array, Array, Any, Any, Array, dict]:
     """Single training step: forward + backward + optimizer update."""
-    loss_fn = _make_loss_fn(params, init_state, syn_state, I_external, config)
+    loss_fn = _make_loss_fn(params, init_state, syn_state, I_external, config, stp_params)
 
     (loss, components), (grad_exc, grad_inh) = jax.value_and_grad(
         loss_fn, argnums=(0, 1), has_aux=True
@@ -295,11 +300,12 @@ def _train_step(
 
 def _build_network(
     config: TrainingConfig,
-) -> tuple[IzhikevichParams, NeuronState, Array, Array, Array, Array]:
+) -> tuple[IzhikevichParams, NeuronState, Array, Array, Array, Array, Array]:
     """Build the network: place neurons, create population, build connectivity.
 
     Returns:
-        params, init_state, W_exc_dense, W_inh_dense, exc_mask, inh_mask
+        params, init_state, W_exc_dense, W_inh_dense, exc_mask, inh_mask,
+        is_excitatory
     """
     key = jax.random.PRNGKey(config.seed)
     key_pop, key_pos, key_conn = jax.random.split(key, 3)
@@ -325,11 +331,11 @@ def _build_network(
     exc_mask = (W_exc_dense > 0.0).astype(jnp.float32)
     inh_mask = (W_inh_dense > 0.0).astype(jnp.float32)
 
-    # Scale down initial weights for training without STP
+    # Scale initial weights (STP provides gain control when enabled)
     W_exc_dense = W_exc_dense * config.init_weight_scale
     W_inh_dense = W_inh_dense * config.init_weight_scale
 
-    return params, init_state, W_exc_dense, W_inh_dense, exc_mask, inh_mask
+    return params, init_state, W_exc_dense, W_inh_dense, exc_mask, inh_mask, is_excitatory
 
 
 def train_weights(config: TrainingConfig | None = None, tracker=None) -> TrainingResult:
@@ -356,20 +362,39 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
     noise_amp = config.I_noise_amplitude
     weight_scale = config.init_weight_scale
     if config.auto_noise:
-        if config.target_firing_rate_hz < 1.0:
-            noise_amp = config.target_firing_rate_hz * 5.0 + 0.3
+        target = config.target_firing_rate_hz
+        if target < 0.1:
+            # Ultra-low regime: reduce noise to avoid swamping target
+            noise_amp = target * 2.0 + 0.02
+            weight_scale = 0.02
+        elif target < 1.0:
+            # Low-mid regime: calibrated via autoresearch sweep
+            noise_amp = target * 5.0 + 0.3
             weight_scale = 0.05
         else:
-            noise_amp = config.target_firing_rate_hz * 1.0 + 0.3
+            # High regime
+            noise_amp = target * 1.0 + 0.3
             weight_scale = 0.50
-        noise_amp = max(min(noise_amp, 15.0), 0.3)
+        noise_amp = max(min(noise_amp, 15.0), 0.15)
         print(f"Auto-noise: I_noise={noise_amp:.2f}, ws={weight_scale:.2f} "
               f"(target FR={config.target_firing_rate_hz:.2f} Hz)")
 
     print(f"Building network: {config.n_neurons} neurons, E/I ratio {config.ei_ratio:.1%}")
     t0 = time.time()
 
-    params, init_state_template, W_exc, W_inh, exc_mask, inh_mask = _build_network(config)
+    params, init_state_template, W_exc, W_inh, exc_mask, inh_mask, is_excitatory = _build_network(config)
+
+    # Create STP params if enabled (Tsodyks-Markram synaptic depression/facilitation)
+    stp_params = None
+    if config.use_stp:
+        stp_params = create_stp_params(config.n_neurons, is_excitatory)
+        # Override excitatory U and tau_rec with config values
+        stp_params = STPParams(
+            U=jnp.where(is_excitatory, config.U_exc, stp_params.U),
+            tau_rec=jnp.where(is_excitatory, config.tau_rec, stp_params.tau_rec),
+            tau_fac=stp_params.tau_fac,
+        )
+        print(f"  STP enabled: U_exc={config.U_exc}, tau_rec={config.tau_rec}ms")
 
     # Apply auto-noise weight scale override (rescale from config default to sweep-optimal)
     if config.auto_noise and weight_scale != config.init_weight_scale:
@@ -419,6 +444,9 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
             "config/surrogate_beta": config.surrogate_beta,
             "config/init_weight_scale": config.init_weight_scale,
             "config/I_noise_amplitude": config.I_noise_amplitude,
+            "config/use_stp": config.use_stp,
+            "config/U_exc": config.U_exc,
+            "config/tau_rec": config.tau_rec,
             "network/exc_synapses": n_exc,
             "network/inh_synapses": n_inh,
         })
@@ -450,6 +478,7 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
             opt_state_exc, opt_state_inh,
             params, init_state, syn_state, I_external,
             config, optimizer, exc_mask, inh_mask,
+            stp_params,
         )
 
         epoch_record = {k: float(v) for k, v in components.items()}

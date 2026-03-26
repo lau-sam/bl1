@@ -131,7 +131,7 @@ def create_population(
     # Initial state
     v = jnp.full(n_neurons, V_REST)
     u = b * v
-    spikes = jnp.zeros(n_neurons, dtype=jnp.bool_)
+    spikes = jnp.zeros(n_neurons, dtype=jnp.float32)
     state = NeuronState(v=v, u=u, spikes=spikes)
 
     # Excitatory mask — first n_exc neurons are excitatory
@@ -184,7 +184,7 @@ def izhikevich_step(
     v_new = jnp.where(spiked, c, v_new)
     u_new = jnp.where(spiked, u_new + d, u_new)
 
-    return NeuronState(v=v_new, u=u_new, spikes=spiked)
+    return NeuronState(v=v_new, u=u_new, spikes=spiked.astype(jnp.float32))
 
 
 # ---------------------------------------------------------------------------
