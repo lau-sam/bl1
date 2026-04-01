@@ -64,6 +64,90 @@ BL-1 is a JAX-based framework for simulating dissociated cortical cultures growi
 
 ---
 
+## Simulated Neurons Playing DOOM
+
+BL-1 integrates with [doom-neuron](https://github.com/SeanCole02/doom-neuron) to create an in-silico replication of the biological DishBrain DOOM experiment. BL-1's virtual CL1 server replaces the real Cortical Labs hardware with 10,000 biophysically grounded spiking neurons -- speaking the exact same UDP protocol -- so the PPO training system connects without modification.
+
+![BL-1 + doom-neuron dashboard](docs/images/bl1_doom_dashboard.png)
+
+**Live 4-panel dashboard** showing the closed-loop system in real-time:
+- **DOOM Gameplay** -- first-person view from VizDoom
+- **Neural Activity** -- spike raster, mountain plot, MEA heatmap, and firing rate timeseries from the simulated culture (RatInABox-inspired composable monitoring)
+- **Decoder Inference** -- action probability compass and per-head bar chart showing what the ML decoder infers from the neural spikes
+- **Automap (2D)** -- retro Atari-style top-down map view with pixelated rendering
+
+### How It Works
+
+```
+DOOM Game State ─► Encoder (PyTorch) ─► Stimulation frequencies/amplitudes
+                                              │
+                                    UDP :12345 (72 bytes)
+                                              │
+                                              ▼
+                               BL-1 Virtual CL1 (JAX)
+                            10,000 Izhikevich neurons
+                            AMPA/NMDA/GABA synapses + STP
+                            64-channel virtual MEA
+                                              │
+                                    UDP :12346 (40 bytes)
+                                              │
+Reward ◄── DOOM executes ◄── Decoder (PyTorch) ◄── Spike counts per channel
+```
+
+The encoder learns stimulation patterns via REINFORCE (non-differentiable spikes). The decoder maps 8 channel-group spike counts to movement, camera, and attack actions. Feedback stimulation rewards kills and punishes damage, scaled by TD-error surprise.
+
+### Why BL-1 Instead of Random Spikes
+
+doom-neuron's SDK mode generates random spikes. BL-1 provides neurons that actually respond to stimulation with structured dynamics -- validated against Wagenaar et al. (2006) cortical culture recordings. Ablation tests (`--decoder-ablation zero`) confirm the simulated neurons carry meaningful signal.
+
+### Quick Start
+
+```bash
+# Clone both repos
+git clone https://github.com/m9h/bl1.git
+git clone https://github.com/SeanCole02/doom-neuron.git
+
+# Shared venv
+uv venv .venv --python 3.12 && source .venv/bin/activate
+uv pip install -e "./bl1[vizdoom,dev]"
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+uv pip install tensorboard==2.20.0 tables opencv-python
+
+# Launch (BL-1 virtual CL1 + doom-neuron training)
+./run_bl1_doom.sh
+
+# Open dashboard in browser
+# doom-neuron/visualisation.html
+```
+
+See [INTEGRATION.md](../INTEGRATION.md) for full documentation.
+
+### Live Monitoring Module (`bl1.monitor`)
+
+A RatInABox-inspired monitoring system with composable plot methods:
+
+```python
+from bl1.monitor import ActivityMonitor
+
+mon = ActivityMonitor(n_neurons=10_000)
+
+# Composable single-panel (RatInABox pattern)
+fig, ax = mon.plot_raster(window_s=10.0)
+fig, ax = mon.plot_mountain(window_s=10.0)   # stacked filled-area
+fig, ax = mon.plot_mea_heatmap(window_s=1.0) # 8x8 electrode grid
+
+# Full dashboard
+fig, axes = mon.plot_dashboard(window_s=10.0)
+
+# MJPEG streaming for browser
+from bl1.monitor import NeuralMJPEGServer
+server = NeuralMJPEGServer(port=12350)
+server.start()
+server.update_frame(mon.render_frame(640, 480))
+```
+
+---
+
 ## Installation
 
 **From source (recommended):**
