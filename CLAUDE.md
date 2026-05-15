@@ -90,84 +90,55 @@ Config file: `configs/wagenaar_calibrated.yaml`
 8. Update via Adam + gradient clipping + NaN protection + weight clamping
 9. Log to trackio every epoch
 
-### Known Issue: FR Floor
-
-Training converges to ~0.178 Hz regardless of target. Root cause: with `init_weight_scale=0.1` and `I_noise_amplitude=2.0`, the network's minimum sustainable firing rate is ~0.18 Hz. The optimizer shrinks weights (W_exc drops from 0.05 to 0.012) but can't push below this floor.
-
-**Approaches to fix (in priority order):**
-
-1. **Adaptive noise**: Set `I_noise_amplitude = max(target_fr * 2.5, 0.5)`. Low targets need less noise.
-2. **Trainable noise**: Add `I_noise_amplitude` and `bg_mean` as learnable parameters with separate LR.
-3. **Curriculum**: Start from validated 1.6 Hz params, gradually shift targets toward recording stats.
-4. **Two-phase training**: Phase 1 at 500ms for FR convergence, Phase 2 at 5000ms for burst matching.
-
 ### Key files
 
 | File | Purpose |
 |------|---------|
 | `src/bl1/training/trainer.py` | Core training loop, `train_weights()` |
 | `src/bl1/training/loss.py` | Loss function components |
+| `src/bl1/training/sharding.py` | Multi-GPU neuron-parallel sharding primitives |
 | `scripts/train_culture.py` | CLI entry point, `--from-recording` |
 | `scripts/train_all_sharf.py` | Batch training with trackio |
 | `configs/wagenaar_calibrated.yaml` | Validated simulation parameters |
+| `configs/wagenaar_burst.yaml` | Burst-rate training contract |
 
-## Autoresearch: Current Priority
+### Current state of the training-side knobs
 
-**The #1 problem is FR convergence.** Training achieves ~31% of target FR across
-all recordings. The auto-noise fix helped (broke the 0.18 Hz floor) but
-`init_weight_scale=0.1` keeps the network too quiet.
+- **FR floor (solved).** Auto-noise calibration (`TrainingConfig.auto_noise=True`)
+  scales `I_noise_amplitude` and `init_weight_scale` from the target firing rate
+  in two regimes (low <1 Hz: `target*5+0.3`, ws=0.05; high ≥1 Hz: `target*1+0.3`,
+  ws=0.50).  Final convergence: 93% of target at 0.3 Hz.
 
-### Step 1: Run the FR sweep (automated, ~30 min)
+- **Burst-rate matching.** `TrainingConfig` already defaults to
+  `sim_duration_ms=5000`, `w_burst_rate=0.5`, `use_stp=True`,
+  `target_burst_rate_per_min=8.0` (Wagenaar).  The contract lives in
+  `configs/wagenaar_burst.yaml`.  Smoke-tested locally
+  (`tests/test_burst_training.py`, marked `@slow`); production validation runs
+  via `scripts/slurm_train_burst.sh` on DGX (5K neurons, 100 epochs).
 
-```bash
-python scripts/autoresearch_fr_sweep.py --target-fr 0.3
-```
-
-This sweeps `init_weight_scale` (0.05-0.5) x `noise_mult` (1.0-5.0) x 4 target FRs.
-Exit code 0 = found a config with >70% FR ratio. Exit code 1 = need more exploration.
-
-Check `/data/datasets/bl1/results/autoresearch/fr_sweep/` for results JSON.
-
-### Step 2: Apply the best config
-
-If the sweep finds a good config (e.g., `init_weight_scale=0.3, noise_mult=2.0`):
-1. Update the defaults in `TrainingConfig` in `src/bl1/training/trainer.py`
-2. Re-run one recording to verify:
-   ```bash
-   python scripts/train_culture.py --from-recording \
-     /data/datasets/bl1/zenodo_sharf_2022/7month_2950.raw.h5 \
-     --n-neurons 5000 --n-epochs 100 --sim-duration-ms 500
-   ```
-3. Check: `Final firing rate` should be within 30% of target
-4. Run validation: `bash scripts/run_validation.sh --quick`
-5. If validation passes: commit, push, re-run batch via Slurm:
-   ```bash
-   sbatch --array=0-32 scripts/slurm_train_sharf.sh
-   ```
-
-### Step 3: Extend to burst matching
-
-Once FR converges (>70% ratio), increase sim duration for burst detection:
-```bash
-python scripts/train_culture.py --from-recording FILE.h5 \
-  --n-neurons 5000 --n-epochs 100 --sim-duration-ms 5000
-```
-This triggers a new JIT compilation (~15 min) but enables burst-rate optimization.
+- **Multi-GPU sharding.** Opt-in scaffold for >50K neurons (see GPU Performance
+  table below).  Build a mesh with `bl1.training.sharding.make_neuron_mesh()`
+  and pass it via `TrainingConfig(mesh=mesh)`; the trainer shards W_exc /
+  W_inh / I_external / NeuronState along the neuron axis and lets JAX's
+  auto-SPMD partition the scan-body matmuls.  Locally exercised on a fake
+  4-device CPU mesh (`tests/test_sharding.py`); real GPU validation pending.
 
 ### Success Criteria
 
 | Metric | Threshold | How to check |
 |--------|-----------|-------------|
 | FR ratio (sim/target) | > 70% | `grep "Final firing" slurm_logs/*.out` |
+| Burst ratio (sim/target) | > 60% | `grep "burst rate" slurm_logs/*.out` |
 | Bio-validation | 6/6 Wagenaar | `bash scripts/run_validation.sh --quick` |
-| Tests | 536 pass | `make test` |
+| Tests | all pass | `make test` (excludes `@slow`) |
 | No NaN | 0 NaN epochs | Check training log for `[NaN-protected]` |
 
 ### Guardrails
 
-- `make test` must pass (536 tests) before any commit
+- `make test` must pass before any commit
 - Bio-validation must remain 6/6 on Wagenaar metrics
-- Never modify `configs/wagenaar_calibrated.yaml` without re-running full validation
+- Never modify `configs/wagenaar_calibrated.yaml` or `configs/wagenaar_burst.yaml`
+  without re-running full validation
 - Results go to `/data/datasets/bl1/results/` (NAS), not local `results/`
 - Use trackio for all training runs
 - Submit batch jobs via Slurm (`sbatch`), not serial Python

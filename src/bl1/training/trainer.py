@@ -102,6 +102,16 @@ class TrainingConfig:
 
     seed: int = 42
 
+    # Optional multi-device sharding (bl1.training.sharding).  When set,
+    # build with make_neuron_mesh() and pass here.  The trainer shards
+    # W_exc / W_inh / I_external / init_state across the mesh's neuron
+    # axis before each training step; JAX's auto-SPMD then partitions the
+    # matmuls inside simulate() accordingly.  Leave None for the standard
+    # single-device path (no behavioural change vs. pre-sharding bl1).
+    # NOTE: real multi-GPU validation happens on DGX; locally this is
+    # exercised against a fake-device CPU mesh in tests/test_sharding.py.
+    mesh: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -401,6 +411,26 @@ def train_weights(config: TrainingConfig | None = None, tracker=None) -> Trainin
         rescale = weight_scale / config.init_weight_scale
         W_exc = W_exc * rescale
         W_inh = W_inh * rescale
+
+    # Optional multi-device sharding (bl1.training.sharding).
+    # When mesh is provided we place W_exc/W_inh/init_state on the
+    # neuron-parallel mesh; JAX's auto-SPMD then partitions the matmuls
+    # inside simulate() accordingly.  No behavioural change when mesh is
+    # None.
+    if config.mesh is not None:
+        from bl1.training.sharding import shard_network
+        sharded = shard_network(
+            config.mesh,
+            W_exc=W_exc, W_inh=W_inh,
+            init_state=init_state_template,
+        )
+        W_exc = sharded.W_exc
+        W_inh = sharded.W_inh
+        init_state_template = NeuronState(
+            v=sharded.v, u=sharded.u, spikes=sharded.spikes,
+        )
+        print(f"  Sharded across {config.mesh.size} device(s) on axis "
+              f"{config.mesh.axis_names[0]!r}")
 
     n_exc = int(jnp.sum(exc_mask > 0))
     n_inh = int(jnp.sum(inh_mask > 0))
