@@ -53,6 +53,12 @@ tasks:
     cmds:
       - cargo run -p bl1-tui -- --headless
 
+  pong:
+    desc: Run the closed-loop Pong experiment (DishBrain) and print the learning curve
+    dir: rust
+    cmds:
+      - cargo run --release -p bl1-games --bin bl1-pong -- {{.CLI_ARGS}}
+
   # --- Test ----------------------------------------------------------------
   test:
     desc: Run Python tests (excludes slow calibration tests)

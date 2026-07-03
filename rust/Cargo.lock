@@ -82,6 +82,19 @@ name = "bl1-core"
 version = "0.1.0"
 
 [[package]]
+name = "bl1-games"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bl1-core",
+ "bl1-mea",
+ "bl1-sim",
+ "clap",
+ "rand",
+ "rand_pcg",
+]
+
+[[package]]
 name = "bl1-mea"
 version = "0.1.0"
 dependencies = [

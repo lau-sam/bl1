@@ -383,6 +383,7 @@ dependency-light simulation and a keyboard-driven control panel.
 | `bl1-analysis` | Burst detection (Wagenaar), branching ratio and avalanche exponents (Beggs & Plenz, MLE) |
 | `bl1-mea` | 64-channel and HD-MEA layouts, neuron→electrode mapping, spike detection, LFP |
 | `bl1-sim` | Neuron placement, distance-dependent connectivity, `Culture` factory, YAML config loader |
+| `bl1-games` | Closed-loop DishBrain experiments: Pong (`bl1-pong`) — sensory encoding, motor decoding, FEP feedback, online STDP |
 | `bl1-tui` | The `bl1` binary: a terminal UI to run and inspect simulations |
 
 From the repo root, `task` wraps the common commands:
@@ -419,6 +420,21 @@ The UI is a mouse- and keyboard-driven cockpit with three views (**Dashboard**, 
 
 Per-step ordering, cell-type mixes, and receptor kinetics mirror the JAX model; the YAML loader
 reads the same `configs/*.yaml` files.
+
+### Closed-loop Pong (DishBrain)
+
+`bl1-games` runs a simulated culture in a Pong closed loop (Kagan 2022 protocol): ball position is
+encoded as sensory stimulation, two motor regions decode a paddle action, and free-energy-principle
+feedback (predictable on a hit, unpredictable on a miss) drives online STDP.
+
+```bash
+task pong -- --neurons 400 --steps 3000        # or: cargo run --release -p bl1-games --bin bl1-pong
+```
+
+It prints hits/misses, mean rally length, and a hit-rate learning curve, and can export a per-event
+CSV (`--csv path`). **Status:** the loop is fully wired, reproducible, and tested; the culture already
+tracks the ball above the static-paddle baseline. A clear *learning* trend (rising rally length) is
+still being tuned — see the roadmap. Doom is next.
 
 ## License
 

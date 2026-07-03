@@ -1,0 +1,20 @@
+[package]
+name = "bl1-games"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "bl1-pong"
+path = "src/bin/pong.rs"
+
+[dependencies]
+bl1-core = { workspace = true }
+bl1-sim = { workspace = true }
+bl1-mea = { workspace = true }
+rand = { workspace = true }
+rand_pcg = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
