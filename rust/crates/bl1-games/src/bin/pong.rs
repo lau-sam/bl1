@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use bl1_games::{ClosedLoop, Event, LoopConfig};
+use bl1_games::{AgentParams, ClosedLoop, Event, LoopConfig, RstdpAgent, RunLog};
 use bl1_sim::Config;
 use clap::Parser;
 
@@ -37,6 +37,11 @@ struct Cli {
     #[arg(long, default_value_t = 20)]
     block: usize,
 
+    /// Use the R-STDP feed-forward learning agent (Wunderlich-style) instead of
+    /// the recurrent-culture reflex loop.
+    #[arg(long)]
+    rstdp: bool,
+
     /// Write a per-event CSV to this path.
     #[arg(long, value_name = "PATH")]
     csv: Option<PathBuf>,
@@ -45,22 +50,30 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let yaml = format!(
-        "culture:\n  n_neurons: {}\n  substrate_um: [1400, 1400]\n  p_max: 0.25\nsimulation:\n  dt_ms: 0.5\nstp:\n  enabled: true\n",
-        cli.neurons
-    );
-    let config = Config::from_yaml_str(&yaml)?;
-
-    let cfg = LoopConfig {
-        game_step_ms: cli.game_step_ms,
-        ..LoopConfig::default()
+    let log: RunLog = if cli.rstdp {
+        println!(
+            "Running R-STDP Pong agent: {} game steps, seed {} ...",
+            cli.steps, cli.seed
+        );
+        let mut agent = RstdpAgent::new(AgentParams::default(), cli.seed);
+        agent.run(cli.steps)
+    } else {
+        let yaml = format!(
+            "culture:\n  n_neurons: {}\n  substrate_um: [1400, 1400]\n  p_max: 0.25\nsimulation:\n  dt_ms: 0.5\nstp:\n  enabled: true\n",
+            cli.neurons
+        );
+        let config = Config::from_yaml_str(&yaml)?;
+        let cfg = LoopConfig {
+            game_step_ms: cli.game_step_ms,
+            ..LoopConfig::default()
+        };
+        println!(
+            "Running closed-loop Pong: {} neurons, {} game steps, seed {} ...",
+            cli.neurons, cli.steps, cli.seed
+        );
+        let mut game = ClosedLoop::new(&config, &cfg, cli.seed);
+        game.run(cli.steps)
     };
-    println!(
-        "Running closed-loop Pong: {} neurons, {} game steps, seed {} ...",
-        cli.neurons, cli.steps, cli.seed
-    );
-    let mut game = ClosedLoop::new(&config, &cfg, cli.seed);
-    let log = game.run(cli.steps);
 
     let total = log.hits + log.misses;
     let mean_rally = if log.rally_lengths.is_empty() {

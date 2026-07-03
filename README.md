@@ -436,12 +436,22 @@ It prints hits/misses, mean rally length, a learning-improvement score, and a hi
 export a per-event CSV (`--csv path`). A multi-seed parameter sweep lives in `bl1-pong-sweep`
 (`task pong-sweep`), scoring configs by their seed-averaged learning improvement.
 
-**Status — honest:** the loop is fully wired, reproducible per seed, and tested. The culture reliably
-**tracks the ball above the static-paddle baseline** (~36–40% hit rate vs ~16% for a frozen paddle),
-so the sensorimotor loop works. A robust *learning* trend does **not** yet hold: the seed-averaged
-improvement at full scale is variance-dominated (≈ 0 ± ~10 pts), and the sweep's best small-scale
-config does not transfer cleanly. Getting reward-modulated STDP to learn Pong consistently is an open
-research problem here — contributions and ideas welcome. Doom is next.
+Two agents share the loop:
+
+- the **recurrent-culture reflex** (default): the culture reliably **tracks the ball above the
+  static-paddle baseline** (~36–40% hit rate vs ~16% for a frozen paddle), so the sensorimotor loop
+  works — but by construction it has no plastic degrees of freedom to *learn* from.
+- an **R-STDP feed-forward agent** (`--rstdp`), following the proven neuromorphic recipe
+  (Wunderlich et al. 2019): a plastic sensory→motor projection, dense per-neuron graded reward,
+  reward-prediction-error baseline, exploration noise, and homeostasis.
+
+**Status — honest:** the loops are fully wired, reproducible per seed, and tested, but **neither yet
+shows robust learning**. The reflex tracks but can't improve; the R-STDP agent has the right
+architecture but does not converge in practice (readout stays near centre, hit rate ~chance).
+Getting a spiking culture to actually *learn* Pong — the scientific core — is an open research problem
+here (careful causal-correlation measurement, weight init, long training, hyperparameter search). The
+literature synthesis and both mechanisms are in the repo as scaffolding. **Contributions and ideas
+very welcome.**
 
 ## License
 

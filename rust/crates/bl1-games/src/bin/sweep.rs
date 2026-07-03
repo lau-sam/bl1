@@ -15,7 +15,10 @@ use bl1_sim::Config;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "bl1-pong-sweep", about = "Multi-seed parameter sweep for closed-loop Pong")]
+#[command(
+    name = "bl1-pong-sweep",
+    about = "Multi-seed parameter sweep for closed-loop Pong"
+)]
 struct Cli {
     #[arg(long, default_value_t = 300)]
     neurons: usize,
@@ -37,12 +40,7 @@ struct Score {
     mean_hit_rate: f32,
 }
 
-fn evaluate(
-    config: &Config,
-    loopcfg: &LoopConfig,
-    seeds: u64,
-    steps: usize,
-) -> (f32, f32, f32) {
+fn evaluate(config: &Config, loopcfg: &LoopConfig, seeds: u64, steps: usize) -> (f32, f32, f32) {
     let mut improvements = Vec::new();
     let mut hit_rates = Vec::new();
     for seed in 0..seeds {

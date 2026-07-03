@@ -7,6 +7,7 @@
 //! online STDP so the culture can reorganise. Learning is measured as rally
 //! length and hit rate over time.
 
+pub mod agent;
 pub mod closed_loop;
 pub mod decoding;
 pub mod encoding;
@@ -14,6 +15,7 @@ pub mod feedback;
 pub mod plasticity;
 pub mod pong;
 
+pub use agent::{AgentParams, RstdpAgent};
 pub use closed_loop::{ClosedLoop, LoopConfig, RunLog};
 pub use plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};
 pub use pong::{Action, Event, Pong, PongState};
