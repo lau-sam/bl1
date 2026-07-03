@@ -8,7 +8,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points, Rectangle};
+use ratatui::widgets::canvas::{Canvas, Points};
 use ratatui::widgets::{
     Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
     Paragraph, Sparkline, Wrap,
@@ -655,8 +655,29 @@ fn draw_pong_canvas(
     playing: bool,
 ) {
     let g = trainer.game();
-    let ball = [(g.ball_x as f64, g.ball_y as f64)];
+    let (bx, by) = (g.ball_x as f64, g.ball_y as f64);
     let py = g.paddle_y as f64;
+
+    // Ball as a chunky 3×3 blob so it reads clearly at cell resolution.
+    let mut ball: Vec<(f64, f64)> = Vec::with_capacity(9);
+    for i in -1..=1 {
+        for j in -1..=1 {
+            ball.push((
+                (bx + i as f64 * 0.013).clamp(0.0, 1.0),
+                (by + j as f64 * 0.03).clamp(0.0, 1.0),
+            ));
+        }
+    }
+    // Paddle as a thick vertical bar (a dense strip of points) on the right.
+    let mut paddle: Vec<(f64, f64)> = Vec::new();
+    let n = 20;
+    for k in 0..=n {
+        let y = (py - 0.1 + 0.2 * k as f64 / n as f64).clamp(0.0, 1.0);
+        for col in [0.95, 0.97, 0.99] {
+            paddle.push((col, y));
+        }
+    }
+
     let title = if playing {
         " Pong — live "
     } else {
@@ -664,27 +685,17 @@ fn draw_pong_canvas(
     };
     let canvas = Canvas::default()
         .block(panel(title, playing))
-        .marker(Marker::Braille)
+        .marker(Marker::Block)
         .x_bounds([0.0, 1.0])
         .y_bounds([0.0, 1.0])
         .paint(move |ctx| {
-            ctx.draw(&Rectangle {
-                x: 0.0,
-                y: 0.0,
-                width: 1.0,
-                height: 1.0,
-                color: Color::DarkGray,
-            });
-            ctx.draw(&CanvasLine {
-                x1: 0.97,
-                y1: (py - 0.1).max(0.0),
-                x2: 0.97,
-                y2: (py + 0.1).min(1.0),
+            ctx.draw(&Points {
+                coords: &paddle,
                 color: CYAN,
             });
             ctx.draw(&Points {
                 coords: &ball,
-                color: Color::Yellow,
+                color: Color::LightYellow,
             });
         });
     frame.render_widget(canvas, area);
