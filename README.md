@@ -104,7 +104,7 @@ doom-neuron's SDK mode generates random spikes. BL-1 provides neurons that actua
 
 ```bash
 # Clone both repos
-git clone https://github.com/m9h/bl1.git
+git clone https://github.com/lau-sam/bl1.git
 git clone https://github.com/SeanCole02/doom-neuron.git
 
 # Shared venv
@@ -153,7 +153,7 @@ server.update_frame(mon.render_frame(640, 480))
 **From source (recommended):**
 
 ```bash
-git clone https://github.com/your-org/bl1.git
+git clone https://github.com/lau-sam/bl1.git
 cd bl1
 pip install -e ".[dev]"
 ```
