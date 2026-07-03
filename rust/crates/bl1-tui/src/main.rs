@@ -1,16 +1,21 @@
-//! `bl1` — a lazygit-style terminal UI to configure, run, and inspect BL-1
-//! culture simulations.
+//! `bl1` — a lazygit/k9s-style terminal cockpit to configure, run, and inspect
+//! BL-1 culture simulations. Mouse- and keyboard-driven.
 
 mod app;
 mod ui;
 
+use std::io::stdout;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
-use app::App;
+use app::{App, Tab};
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
+    MouseEvent, MouseEventKind,
+};
+use crossterm::execute;
 
 #[derive(Parser, Debug)]
 #[command(name = "bl1", about = "Terminal UI for BL-1 culture simulations")]
@@ -37,7 +42,9 @@ fn main() -> Result<()> {
     }
 
     let mut terminal = ratatui::init();
+    let _ = execute!(stdout(), EnableMouseCapture);
     let result = run(&mut terminal, &mut app);
+    let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -45,11 +52,12 @@ fn main() -> Result<()> {
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|frame| ui::draw(frame, app))?;
-        if event::poll(Duration::from_millis(200))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            handle_key(app, key.code);
+        if event::poll(Duration::from_millis(200))? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key.code),
+                Event::Mouse(m) => handle_mouse(app, m),
+                _ => {}
+            }
         }
         if app.should_quit {
             return Ok(());
@@ -58,16 +66,46 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
 }
 
 fn handle_key(app: &mut App, code: KeyCode) {
+    // Any key dismisses the help overlay.
+    if app.show_help {
+        app.show_help = false;
+        return;
+    }
     match code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-        KeyCode::Char('j') | KeyCode::Down => app.select_next(),
-        KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
+        KeyCode::Char('?') => app.toggle_help(),
+        KeyCode::Tab => app.next_tab(),
+        KeyCode::BackTab => app.prev_tab(),
+        KeyCode::Char('1') => app.set_tab(Tab::Dashboard),
+        KeyCode::Char('2') => app.set_tab(Tab::Simulate),
+        KeyCode::Char('3') => app.set_tab(Tab::Results),
+        KeyCode::Char('j') | KeyCode::Down => app.browse_next(),
+        KeyCode::Char('k') | KeyCode::Up => app.browse_prev(),
         KeyCode::Char('+') | KeyCode::Char('=') => app.increase_neurons(),
         KeyCode::Char('-') => app.decrease_neurons(),
         KeyCode::Char(']') => app.increase_duration(),
         KeyCode::Char('[') => app.decrease_duration(),
         KeyCode::Char('s') => app.reseed(),
-        KeyCode::Enter | KeyCode::Char('r') => app.run_selected(),
+        KeyCode::Enter | KeyCode::Char('r') => {
+            if app.active_tab == Tab::Dashboard {
+                app.set_tab(Tab::Simulate);
+            } else {
+                app.run_selected();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_mouse(app: &mut App, m: MouseEvent) {
+    if app.show_help {
+        app.show_help = false;
+        return;
+    }
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Left) => app.handle_click(m.column, m.row),
+        MouseEventKind::ScrollDown => app.handle_scroll(false, m.column, m.row),
+        MouseEventKind::ScrollUp => app.handle_scroll(true, m.column, m.row),
         _ => {}
     }
 }

@@ -403,9 +403,19 @@ cargo run -p bl1-tui       # launch the terminal UI (reads ../configs/*.yaml)
 cargo run -p bl1-tui -- --headless   # print one preview's statistics, no TTY
 ```
 
-In the UI, `j`/`k` select a config, `+`/`-` cap the neuron count, `[`/`]` change the preview
-window, `s` reseeds, `Enter`/`r` runs, and `q` quits. Per-step ordering, cell-type mixes, and
-receptor kinetics mirror the JAX model; the YAML loader reads the same `configs/*.yaml` files.
+The UI is a mouse- and keyboard-driven cockpit with three views (**Dashboard**, **Simulate**,
+**Results**), inspired by lazygit and k9s:
+
+- **Navigate:** click a tab, or press `Tab` / `1` `2` `3` to switch views. `?` opens a
+  context-sensitive help overlay for the current view; the most-used keys are always shown
+  in the bar at the bottom.
+- **Simulate:** click a config or use `j`/`k` to select it; adjust the neuron cap and preview
+  window with the on-screen `[-]` `[+]` buttons (or `+`/`-` and `[`/`]`); `s` reseeds;
+  `Enter`/`r` or the **Run** button starts a preview. The raster scrolls with the mouse wheel.
+- **Results:** browse every run from the session with the metrics that came out of it.
+
+Per-step ordering, cell-type mixes, and receptor kinetics mirror the JAX model; the YAML loader
+reads the same `configs/*.yaml` files.
 
 ## License
 

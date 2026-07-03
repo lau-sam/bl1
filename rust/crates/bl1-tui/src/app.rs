@@ -9,11 +9,73 @@ use bl1_analysis::{
 };
 use bl1_core::simulate;
 use bl1_sim::{Config, Culture};
+use ratatui::layout::{Position, Rect};
+
+/// Top-level views, switchable by clicking the tab bar, `Tab`, or `1`/`2`/`3`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Dashboard,
+    Simulate,
+    Results,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 3] = [Tab::Dashboard, Tab::Simulate, Tab::Results];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Tab::Dashboard => "Dashboard",
+            Tab::Simulate => "Simulate",
+            Tab::Results => "Results",
+        }
+    }
+}
+
+/// Focusable panels inside the Simulate view (drives keyboard scroll target
+/// and the highlighted border).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Configs,
+    Params,
+    Raster,
+    Stats,
+}
+
+/// Clickable/hit-testable screen rectangles, refreshed every frame by the
+/// renderer so the event loop can map mouse coordinates back to actions.
+#[derive(Default, Clone)]
+pub struct Regions {
+    pub tabs: Vec<Rect>, // parallel to `Tab::ALL`
+    pub configs: Rect,
+    pub params: Rect,
+    pub raster: Rect,
+    pub stats: Rect,
+    pub btn_neuron_dec: Rect,
+    pub btn_neuron_inc: Rect,
+    pub btn_dur_dec: Rect,
+    pub btn_dur_inc: Rect,
+    pub btn_reseed: Rect,
+    pub btn_run: Rect,
+    pub results: Rect,
+}
 
 /// A selectable configuration: a display name and its raw YAML.
 pub struct ConfigEntry {
     pub name: String,
     pub yaml: String,
+}
+
+/// A compact record of a finished run, listed in the Results view.
+pub struct HistoryEntry {
+    pub config_name: String,
+    pub neuron_cap: usize,
+    pub preview_ms: f32,
+    pub seed: u64,
+    pub n_neurons: usize,
+    pub mean_fr_hz: f64,
+    pub n_bursts: usize,
+    pub burst_rate_per_min: f32,
+    pub branching_ratio: f64,
 }
 
 /// Results of a completed preview run.
@@ -45,6 +107,15 @@ pub struct App {
     pub result: Option<RunResult>,
     pub status: String,
     pub should_quit: bool,
+    // --- navigation / cockpit state ---
+    pub active_tab: Tab,
+    pub focus: Focus,
+    pub show_help: bool,
+    pub raster_scroll: u16,
+    pub history: Vec<HistoryEntry>,
+    pub results_selected: usize,
+    pub regions: Regions,
+    pub configs_from_dir: usize,
 }
 
 impl App {
@@ -52,6 +123,7 @@ impl App {
     /// and always offering two built-in presets.
     pub fn new(config_dir: Option<&Path>) -> Self {
         let mut configs = builtin_presets();
+        let presets = configs.len();
         if let Some(dir) = config_dir
             && let Ok(entries) = fs::read_dir(dir)
         {
@@ -70,6 +142,7 @@ impl App {
                 }
             }
         }
+        let configs_from_dir = configs.len() - presets;
         Self {
             configs,
             selected: 0,
@@ -79,8 +152,18 @@ impl App {
             result: None,
             status: "Select a config and press Enter / r to run a preview.".to_string(),
             should_quit: false,
+            active_tab: Tab::Dashboard,
+            focus: Focus::Configs,
+            show_help: false,
+            raster_scroll: 0,
+            history: Vec::new(),
+            results_selected: 0,
+            regions: Regions::default(),
+            configs_from_dir,
         }
     }
+
+    // --- selection ---------------------------------------------------------
 
     pub fn select_next(&mut self) {
         if !self.configs.is_empty() {
@@ -114,12 +197,159 @@ impl App {
         self.seed = self.seed.wrapping_add(1);
     }
 
+    // --- navigation --------------------------------------------------------
+
+    pub fn set_tab(&mut self, tab: Tab) {
+        self.active_tab = tab;
+    }
+
+    pub fn next_tab(&mut self) {
+        let i = Tab::ALL
+            .iter()
+            .position(|t| *t == self.active_tab)
+            .unwrap_or(0);
+        self.active_tab = Tab::ALL[(i + 1) % Tab::ALL.len()];
+    }
+
+    pub fn prev_tab(&mut self) {
+        let i = Tab::ALL
+            .iter()
+            .position(|t| *t == self.active_tab)
+            .unwrap_or(0);
+        self.active_tab = Tab::ALL[(i + Tab::ALL.len() - 1) % Tab::ALL.len()];
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    /// `j` / down-arrow: context-dependent — scroll the focused raster, browse
+    /// the results list, or move to the next config.
+    pub fn browse_next(&mut self) {
+        match self.active_tab {
+            Tab::Simulate if self.focus == Focus::Raster => {
+                self.raster_scroll = self.raster_scroll.saturating_add(1);
+            }
+            Tab::Simulate => self.select_next(),
+            Tab::Results => {
+                if !self.history.is_empty() {
+                    self.results_selected = (self.results_selected + 1).min(self.history.len() - 1);
+                }
+            }
+            Tab::Dashboard => {}
+        }
+    }
+
+    /// `k` / up-arrow: mirror of [`browse_next`].
+    pub fn browse_prev(&mut self) {
+        match self.active_tab {
+            Tab::Simulate if self.focus == Focus::Raster => {
+                self.raster_scroll = self.raster_scroll.saturating_sub(1);
+            }
+            Tab::Simulate => self.select_prev(),
+            Tab::Results => self.results_selected = self.results_selected.saturating_sub(1),
+            Tab::Dashboard => {}
+        }
+    }
+
+    // --- mouse -------------------------------------------------------------
+
+    /// Route a left-click at `(x, y)` to the region it landed in.
+    pub fn handle_click(&mut self, x: u16, y: u16) {
+        let pos = Position { x, y };
+
+        // Tab bar is live in every view.
+        for (i, r) in self.regions.tabs.iter().enumerate() {
+            if r.contains(pos) {
+                self.active_tab = Tab::ALL[i];
+                return;
+            }
+        }
+
+        match self.active_tab {
+            Tab::Simulate => self.click_simulate(pos, y),
+            Tab::Results => {
+                if self.regions.results.contains(pos) {
+                    let top = self.regions.results.y + 1; // border
+                    if y >= top {
+                        let idx = (y - top) as usize;
+                        if idx < self.history.len() {
+                            self.results_selected = idx;
+                        }
+                    }
+                }
+            }
+            Tab::Dashboard => {}
+        }
+    }
+
+    fn click_simulate(&mut self, pos: Position, y: u16) {
+        let r = &self.regions;
+        if r.btn_run.contains(pos) {
+            self.run_selected();
+        } else if r.btn_neuron_inc.contains(pos) {
+            self.increase_neurons();
+        } else if r.btn_neuron_dec.contains(pos) {
+            self.decrease_neurons();
+        } else if r.btn_dur_inc.contains(pos) {
+            self.increase_duration();
+        } else if r.btn_dur_dec.contains(pos) {
+            self.decrease_duration();
+        } else if r.btn_reseed.contains(pos) {
+            self.reseed();
+        } else if r.configs.contains(pos) {
+            self.focus = Focus::Configs;
+            let top = r.configs.y + 1; // border
+            if y >= top {
+                let idx = (y - top) as usize;
+                if idx < self.configs.len() {
+                    self.selected = idx;
+                }
+            }
+        } else if r.raster.contains(pos) {
+            self.focus = Focus::Raster;
+        } else if r.params.contains(pos) {
+            self.focus = Focus::Params;
+        } else if r.stats.contains(pos) {
+            self.focus = Focus::Stats;
+        }
+    }
+
+    /// Route a scroll-wheel tick to whatever the cursor hovers.
+    pub fn handle_scroll(&mut self, up: bool, x: u16, y: u16) {
+        let pos = Position { x, y };
+        if self.regions.raster.contains(pos) {
+            self.focus = Focus::Raster;
+            self.raster_scroll = if up {
+                self.raster_scroll.saturating_sub(1)
+            } else {
+                self.raster_scroll.saturating_add(1)
+            };
+        } else if self.regions.configs.contains(pos) {
+            if up {
+                self.select_prev();
+            } else {
+                self.select_next();
+            }
+        } else if self.regions.results.contains(pos) {
+            if up {
+                self.browse_prev();
+            } else {
+                self.browse_next();
+            }
+        }
+    }
+
+    // --- simulation --------------------------------------------------------
+
     /// Run a capped preview simulation of the selected config.
     pub fn run_selected(&mut self) {
+        self.active_tab = Tab::Simulate;
         let Some(entry) = self.configs.get(self.selected) else {
             self.status = "No configuration selected.".to_string();
             return;
         };
+        let config_name = entry.name.clone();
         let mut config = match Config::from_yaml_str(&entry.yaml) {
             Ok(c) => c,
             Err(e) => {
@@ -146,6 +376,21 @@ impl App {
         let sigma = branching_ratio(&raster, dt, 4.0);
         let (sizes, _dur) = avalanche_distributions(&raster, dt, 4.0);
         let size_exp = estimate_power_law_exponent(&sizes);
+        let mean_fr_hz = raster.mean_firing_rate_hz(dt);
+
+        self.raster_scroll = 0;
+        self.history.push(HistoryEntry {
+            config_name,
+            neuron_cap: self.neuron_cap,
+            preview_ms: duration_ms,
+            seed: self.seed,
+            n_neurons: culture.n_neurons(),
+            mean_fr_hz,
+            n_bursts: bstats.n_bursts,
+            burst_rate_per_min: bstats.burst_rate_per_min,
+            branching_ratio: sigma,
+        });
+        self.results_selected = self.history.len() - 1;
 
         self.result = Some(RunResult {
             n_neurons: culture.n_neurons(),
@@ -153,7 +398,7 @@ impl App {
             dt_ms: dt,
             duration_ms,
             n_bursts: bstats.n_bursts,
-            mean_fr_hz: raster.mean_firing_rate_hz(dt),
+            mean_fr_hz,
             burst_rate_per_min: bstats.burst_rate_per_min,
             ibi_mean_ms: bstats.ibi_mean_ms,
             ibi_cv: bstats.ibi_cv,
@@ -170,6 +415,65 @@ impl App {
             self.seed,
             bstats.n_bursts
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tabs_cycle_both_ways() {
+        let mut app = App::new(None);
+        assert!(app.active_tab == Tab::Dashboard);
+        app.next_tab();
+        assert!(app.active_tab == Tab::Simulate);
+        app.prev_tab();
+        app.prev_tab();
+        assert!(app.active_tab == Tab::Results); // wrapped around
+    }
+
+    #[test]
+    fn click_on_tab_rect_switches_view() {
+        let mut app = App::new(None);
+        app.regions.tabs = vec![
+            Rect::new(0, 0, 5, 1),
+            Rect::new(6, 0, 5, 1),
+            Rect::new(12, 0, 5, 1),
+        ];
+        app.handle_click(7, 0); // inside the second tab (Simulate)
+        assert!(app.active_tab == Tab::Simulate);
+    }
+
+    #[test]
+    fn click_on_button_adjusts_parameter() {
+        let mut app = App::new(None);
+        app.set_tab(Tab::Simulate);
+        app.regions.btn_neuron_inc = Rect::new(10, 10, 3, 1);
+        let before = app.neuron_cap;
+        app.handle_click(11, 10);
+        assert!(app.neuron_cap > before);
+    }
+
+    #[test]
+    fn results_browse_clamps_without_history() {
+        let mut app = App::new(None);
+        app.set_tab(Tab::Results);
+        app.browse_next();
+        assert_eq!(app.results_selected, 0);
+        app.browse_prev();
+        assert_eq!(app.results_selected, 0);
+    }
+
+    #[test]
+    fn running_a_preset_records_history() {
+        let mut app = App::new(None);
+        app.neuron_cap = 100;
+        app.preview_ms = 500.0;
+        app.run_selected();
+        assert_eq!(app.history.len(), 1);
+        assert!(app.result.is_some());
+        assert!(app.active_tab == Tab::Simulate);
     }
 }
 
