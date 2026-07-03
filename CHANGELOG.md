@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detection, and a point-source LFP approximation.
 - `bl1-sim` crate: neuron placement, distance-dependent connectivity, a reproducible `Culture`
   factory, and a YAML config loader compatible with `configs/*.yaml`.
+- `bl1-tui` crate: a lazygit-style terminal UI (`bl1` binary) to browse configs, run capped
+  preview simulations, and inspect the spike raster and culture statistics live. A `--headless`
+  mode prints statistics without a terminal for smoke testing.
 
 ### Fixed
 
