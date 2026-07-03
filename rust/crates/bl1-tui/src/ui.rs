@@ -8,7 +8,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Points};
+use ratatui::widgets::canvas::{Canvas, Circle, Points};
 use ratatui::widgets::{
     Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
     Paragraph, Sparkline, Wrap,
@@ -657,16 +657,6 @@ fn draw_pong_canvas(
     let (bx, by) = (g.ball_x as f64, g.ball_y as f64);
     let py = g.paddle_y as f64;
 
-    // Ball as a chunky 3×3 blob so it reads clearly at cell resolution.
-    let mut ball: Vec<(f64, f64)> = Vec::with_capacity(9);
-    for i in -1..=1 {
-        for j in -1..=1 {
-            ball.push((
-                (bx + i as f64 * 0.013).clamp(0.0, 1.0),
-                (by + j as f64 * 0.03).clamp(0.0, 1.0),
-            ));
-        }
-    }
     // Paddle as a thick vertical bar (a dense strip of points) on the right.
     let mut paddle: Vec<(f64, f64)> = Vec::new();
     let n = 20;
@@ -692,17 +682,24 @@ fn draw_pong_canvas(
                 coords: &paddle,
                 color: CYAN,
             });
-            ctx.draw(&Points {
-                coords: &ball,
-                color: Color::LightYellow,
-            });
+            // Ball as concentric circles → a clearly round, filled-looking ball.
+            for radius in [0.05, 0.035, 0.02] {
+                ctx.draw(&Circle {
+                    x: bx,
+                    y: by,
+                    radius,
+                    color: Color::LightYellow,
+                });
+            }
         });
     frame.render_widget(canvas, area);
 }
 
 fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
     let curve = trainer.hit_rate_curve(20);
-    let block = panel(" Learning curve — hit % per 20 events ", false);
+    let (hits, misses) = (trainer.hits(), trainer.misses());
+    let title = format!(" Learning curve — {hits} hits / {misses} misses ");
+    let block = panel(&title, false);
     if curve.len() < 2 {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -720,6 +717,7 @@ fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, are
         .map(|(i, &v)| (i as f64, v as f64 * 100.0))
         .collect();
     let x_max = (pts.len() - 1) as f64;
+    let total_events = hits + misses;
     let datasets = vec![
         Dataset::default()
             .name("hit %")
@@ -728,11 +726,24 @@ fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, are
             .style(Style::default().fg(Color::Green))
             .data(&pts),
     ];
+    let x_labels = vec![
+        "0".to_string(),
+        format!("{}", total_events / 2),
+        format!("{total_events} events"),
+    ];
     let chart = Chart::new(datasets)
         .block(block)
-        .x_axis(Axis::default().bounds([0.0, x_max]))
+        .x_axis(
+            Axis::default()
+                .title("events played →")
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([0.0, x_max])
+                .labels(x_labels),
+        )
         .y_axis(
             Axis::default()
+                .title("hit %")
+                .style(Style::default().fg(Color::DarkGray))
                 .bounds([0.0, 100.0])
                 .labels(vec!["0", "50", "100"]),
         );
