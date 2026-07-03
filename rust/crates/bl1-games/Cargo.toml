@@ -10,6 +10,10 @@ authors.workspace = true
 name = "bl1-pong"
 path = "src/bin/pong.rs"
 
+[[bin]]
+name = "bl1-pong-sweep"
+path = "src/bin/sweep.rs"
+
 [dependencies]
 bl1-core = { workspace = true }
 bl1-sim = { workspace = true }

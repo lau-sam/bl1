@@ -29,6 +29,8 @@ pub struct LoopConfig {
     pub baseline_rate_hz: f32,
     /// Ball speed (field fractions per game step); larger = more rallies per run.
     pub ball_speed: f32,
+    /// Sensory stimulation amplitude (current units, comparable to the drive scale).
+    pub sensory_amplitude: f32,
     /// Reward-modulated STDP parameters.
     pub plasticity: ThreeFactorParams,
     /// Dopamine-like reward signal (hit/miss amplitudes + decay).
@@ -42,6 +44,7 @@ impl Default for LoopConfig {
             n_sensory: 8,
             baseline_rate_hz: 3.0,
             ball_speed: 0.03,
+            sensory_amplitude: 10.0,
             plasticity: ThreeFactorParams::default(),
             reward: Reward::default(),
         }
@@ -69,6 +72,25 @@ impl RunLog {
         } else {
             self.hits as f32 / total as f32
         }
+    }
+
+    /// Learning score: second-half hit rate minus first-half hit rate over the
+    /// run's events. Positive = the culture improved. More robust to per-block
+    /// noise than eyeballing the curve; average it across seeds when tuning.
+    pub fn improvement(&self) -> f32 {
+        let n = self.events.len();
+        if n < 2 {
+            return 0.0;
+        }
+        let mid = n / 2;
+        let rate = |slice: &[(usize, Event)]| {
+            if slice.is_empty() {
+                0.0
+            } else {
+                slice.iter().filter(|(_, e)| *e == Event::Hit).count() as f32 / slice.len() as f32
+            }
+        };
+        rate(&self.events[mid..]) - rate(&self.events[..mid])
     }
 
     /// Hit rate within each consecutive block of `block` events — the learning
@@ -154,12 +176,15 @@ impl ClosedLoop {
         let nnz = culture.network.w_exc.data.len();
         let plasticity = ThreeFactorStdp::new(n, nnz, cfg.plasticity.clone());
 
+        let mut encoder = SensoryEncoder::new(sensory);
+        encoder.amplitude = cfg.sensory_amplitude;
+
         Self {
             culture,
             state,
             pong,
             game,
-            encoder: SensoryEncoder::new(sensory),
+            encoder,
             decoder,
             feedback: FeedbackProtocol::default(),
             plasticity,
