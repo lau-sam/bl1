@@ -16,8 +16,8 @@ bl1-mea = { path = "crates/bl1-mea" }
 bl1-sim = { path = "crates/bl1-sim" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
-rand = "0.8"
-rand_pcg = "0.3"
+rand = "0.9"
+rand_pcg = "0.9"
 ratatui = "0.29"
 crossterm = "0.28"
 clap = { version = "4", features = ["derive"] }

@@ -1,0 +1,11 @@
+[package]
+name = "bl1-mea"
+description = "Virtual multi-electrode array: electrode layouts, neuron-electrode mapping, spike detection and LFP."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bl1-core.workspace = true

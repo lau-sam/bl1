@@ -18,7 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust Cargo workspace under `rust/` with the `bl1-core` crate: a forward spiking-network
   simulator (Izhikevich/AdEx neurons, AMPA/NMDA/GABA_A/GABA_B synapses, Tsodyks-Markram
   short-term plasticity, trace-based STDP, CSR connectivity) whose per-step ordering matches
-  the reference JAX implementation.
+  the reference JAX implementation, with a configurable AMPA/NMDA and GABA_A/GABA_B split.
+- `bl1-analysis` crate: burst detection (Wagenaar) and criticality metrics (branching ratio,
+  neuronal avalanches, MLE power-law exponents).
+- `bl1-mea` crate: CL1 64-channel and MaxOne HD-MEA layouts, neuron→electrode mapping, spike
+  detection, and a point-source LFP approximation.
+- `bl1-sim` crate: neuron placement, distance-dependent connectivity, a reproducible `Culture`
+  factory, and a YAML config loader compatible with `configs/*.yaml`.
 
 ### Fixed
 

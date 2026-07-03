@@ -42,10 +42,18 @@ pub struct SynapseState {
     pub g_gaba_b_decay: Vec<f32>,
     nmda_norm: f32,
     gaba_b_norm: f32,
+    // Fraction of the excitatory drive routed to AMPA vs NMDA, and of the
+    // inhibitory drive to GABA_A vs GABA_B. Default 1.0 sends the full drive to
+    // every receptor; `with_receptor_split` reproduces the JAX model's split.
+    ampa_frac: f32,
+    nmda_frac: f32,
+    gaba_a_frac: f32,
+    gaba_b_frac: f32,
 }
 
 impl SynapseState {
-    /// Zero-initialised conductances for `n` neurons.
+    /// Zero-initialised conductances for `n` neurons; the full drive reaches
+    /// every receptor.
     pub fn zeros(n: usize) -> Self {
         Self {
             g_ampa: vec![0.0; n],
@@ -56,7 +64,23 @@ impl SynapseState {
             g_gaba_b_decay: vec![0.0; n],
             nmda_norm: dual_exp_norm(TAU_NMDA_RISE, TAU_NMDA_DECAY),
             gaba_b_norm: dual_exp_norm(TAU_GABA_B_RISE, TAU_GABA_B_DECAY),
+            ampa_frac: 1.0,
+            nmda_frac: 1.0,
+            gaba_a_frac: 1.0,
+            gaba_b_frac: 1.0,
         }
+    }
+
+    /// Zero-initialised conductances that split the excitatory drive between
+    /// AMPA `(1 - nmda_ratio)` and NMDA `nmda_ratio`, and the inhibitory drive
+    /// between GABA_A `(1 - gaba_b_ratio)` and GABA_B `gaba_b_ratio`.
+    pub fn with_receptor_split(n: usize, nmda_ratio: f32, gaba_b_ratio: f32) -> Self {
+        let mut s = Self::zeros(n);
+        s.ampa_frac = 1.0 - nmda_ratio;
+        s.nmda_frac = nmda_ratio;
+        s.gaba_a_frac = 1.0 - gaba_b_ratio;
+        s.gaba_b_frac = gaba_b_ratio;
+        s
     }
 
     pub fn len(&self) -> usize {
@@ -80,18 +104,18 @@ impl SynapseState {
         let decay_gaba_b_r = (-dt / TAU_GABA_B_RISE).exp();
         let decay_gaba_b_d = (-dt / TAU_GABA_B_DECAY).exp();
         for j in 0..self.len() {
+            let exc_ampa = exc_input[j] * self.ampa_frac;
+            let exc_nmda = exc_input[j] * self.nmda_frac * self.nmda_norm;
+            let inh_a = inh_input[j] * self.gaba_a_frac;
+            let inh_b = inh_input[j] * self.gaba_b_frac * self.gaba_b_norm;
             // Single-exponential receptors.
-            self.g_ampa[j] = self.g_ampa[j] * decay_ampa + exc_input[j];
-            self.g_gaba_a[j] = self.g_gaba_a[j] * decay_gaba_a + inh_input[j];
+            self.g_ampa[j] = self.g_ampa[j] * decay_ampa + exc_ampa;
+            self.g_gaba_a[j] = self.g_gaba_a[j] * decay_gaba_a + inh_a;
             // Dual-exponential receptors.
-            self.g_nmda_rise[j] =
-                self.g_nmda_rise[j] * decay_nmda_r + exc_input[j] * self.nmda_norm;
-            self.g_nmda_decay[j] =
-                self.g_nmda_decay[j] * decay_nmda_d + exc_input[j] * self.nmda_norm;
-            self.g_gaba_b_rise[j] =
-                self.g_gaba_b_rise[j] * decay_gaba_b_r + inh_input[j] * self.gaba_b_norm;
-            self.g_gaba_b_decay[j] =
-                self.g_gaba_b_decay[j] * decay_gaba_b_d + inh_input[j] * self.gaba_b_norm;
+            self.g_nmda_rise[j] = self.g_nmda_rise[j] * decay_nmda_r + exc_nmda;
+            self.g_nmda_decay[j] = self.g_nmda_decay[j] * decay_nmda_d + exc_nmda;
+            self.g_gaba_b_rise[j] = self.g_gaba_b_rise[j] * decay_gaba_b_r + inh_b;
+            self.g_gaba_b_decay[j] = self.g_gaba_b_decay[j] * decay_gaba_b_d + inh_b;
         }
     }
 }
