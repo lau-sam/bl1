@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/latest/.schema/devbox.schema.json",
+  "packages": [
+    "go-task@latest",
+    "python@3.12",
+    "rustup@latest"
+  ],
+  "env": {
+    "RUSTUP_HOME": "$PWD/.devbox/rustup",
+    "CARGO_HOME": "$PWD/.devbox/cargo"
+  },
+  "shell": {
+    "init_hook": [
+      "export PATH=\"$CARGO_HOME/bin:$PATH\"",
+      "rustup show active-toolchain >/dev/null 2>&1 || rustup default stable",
+      "echo 'BL-1 dev shell ready — run: task   (lists all commands)'"
+    ],
+    "scripts": {
+      "setup": ["task install"],
+      "tui": ["task tui"]
+    }
+  }
+}

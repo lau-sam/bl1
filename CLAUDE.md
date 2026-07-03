@@ -15,7 +15,7 @@ BL-1 is a JAX-based in-silico cortical culture simulator. It models dissociated 
 
 ```bash
 # Tests (must pass before any commit)
-make test                              # 536 tests, ~4 min
+task test                              # 536 tests, ~4 min
 .venv/bin/pytest tests/test_validation.py -v  # validation framework
 
 # Full validation suite
@@ -130,12 +130,12 @@ Config file: `configs/wagenaar_calibrated.yaml`
 | FR ratio (sim/target) | > 70% | `grep "Final firing" slurm_logs/*.out` |
 | Burst ratio (sim/target) | > 60% | `grep "burst rate" slurm_logs/*.out` |
 | Bio-validation | 6/6 Wagenaar | `bash scripts/run_validation.sh --quick` |
-| Tests | all pass | `make test` (excludes `@slow`) |
+| Tests | all pass | `task test` (excludes `@slow`) |
 | No NaN | 0 NaN epochs | Check training log for `[NaN-protected]` |
 
 ### Guardrails
 
-- `make test` must pass before any commit
+- `task test` must pass before any commit
 - Bio-validation must remain 6/6 on Wagenaar metrics
 - Never modify `configs/wagenaar_calibrated.yaml` or `configs/wagenaar_burst.yaml`
   without re-running full validation

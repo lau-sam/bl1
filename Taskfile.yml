@@ -1,0 +1,161 @@
+# BL-1 task runner. Single entry point for install, simulation, TUI, and checks.
+# Run `task` (no args) to list everything. Requires go-task (provided by devbox).
+version: '3'
+
+vars:
+  VENV: .venv/bin
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # --- Install -------------------------------------------------------------
+  install:
+    desc: Install everything (Python venv + Rust workspace)
+    cmds:
+      - task: install:py
+      - task: install:rust
+
+  install:py:
+    desc: Create .venv and install BL-1 with dev + quality extras
+    cmds:
+      - test -d .venv || python -m venv .venv
+      - "{{.VENV}}/pip install -U pip"
+      - '{{.VENV}}/pip install -e ".[dev,quality]"'
+
+  install:rust:
+    desc: Build the Rust workspace (forward simulator + TUI)
+    dir: rust
+    cmds:
+      - cargo build
+
+  # --- Run -----------------------------------------------------------------
+  tui:
+    desc: Launch the interactive terminal UI (the cockpit)
+    dir: rust
+    cmds:
+      - cargo run -p bl1-tui
+    interactive: true
+
+  tui:release:
+    desc: Launch the TUI from an optimized release build
+    dir: rust
+    cmds:
+      - cargo run --release -p bl1-tui
+    interactive: true
+
+  sim:
+    desc: Run one headless simulation and print stats (no TTY)
+    dir: rust
+    cmds:
+      - cargo run -p bl1-tui -- --headless
+
+  # --- Test ----------------------------------------------------------------
+  test:
+    desc: Run Python tests (excludes slow calibration tests)
+    cmds:
+      - "{{.VENV}}/python -m pytest tests/ --ignore=tests/test_bursting_calibration.py -x -q -m 'not slow'"
+
+  test:rust:
+    desc: Run the Rust workspace test suite
+    dir: rust
+    cmds:
+      - cargo test
+
+  test:all:
+    desc: Run both Python and Rust test suites
+    cmds:
+      - task: test
+      - task: test:rust
+
+  test:full:
+    desc: Run the full Python suite including slow tests
+    cmds:
+      - "{{.VENV}}/python -m pytest tests/ -v --tb=short"
+
+  coverage:
+    desc: Python tests with a coverage report
+    cmds:
+      - |
+        {{.VENV}}/python -m pytest tests/ \
+          --ignore=tests/test_bursting_calibration.py \
+          --cov=src/bl1 --cov-branch \
+          --cov-report=term-missing \
+          -q -m 'not slow'
+
+  # --- Lint / quality ------------------------------------------------------
+  lint:
+    desc: Lint Python (ruff check + format check)
+    cmds:
+      - "{{.VENV}}/ruff check src/bl1/"
+      - "{{.VENV}}/ruff format --check src/bl1/"
+
+  lint:fix:
+    desc: Auto-fix Python lint and formatting issues
+    cmds:
+      - "{{.VENV}}/ruff check src/bl1/ --fix"
+      - "{{.VENV}}/ruff format src/bl1/"
+
+  typecheck:
+    desc: Type-check Python with mypy
+    cmds:
+      - '{{.VENV}}/mypy src/bl1 --ignore-missing-imports --exclude "notebooks|benchmarks|scripts"'
+
+  quality:
+    desc: Code quality metrics (docstrings, dead code, complexity, security)
+    cmds:
+      - echo "=== Docstring Coverage ==="
+      - "{{.VENV}}/interrogate src/bl1/ --fail-under 60"
+      - echo "=== Dead Code ==="
+      - "{{.VENV}}/vulture src/bl1/ --min-confidence 90"
+      - echo "=== Complexity ==="
+      - "{{.VENV}}/radon cc src/bl1/ -a -nc"
+      - echo "=== Security ==="
+      - "{{.VENV}}/bandit -r src/bl1/ -ll -q"
+
+  fmt:
+    desc: Format Rust code (cargo fmt)
+    dir: rust
+    cmds:
+      - cargo fmt
+
+  clippy:
+    desc: Lint Rust with clippy
+    dir: rust
+    cmds:
+      - cargo clippy --all-targets
+
+  # --- Aggregate / misc ----------------------------------------------------
+  all:
+    desc: Run all Python quality checks (lint + typecheck + test + quality)
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+      - task: quality
+
+  benchmark:
+    desc: Benchmark scaling on local CPU
+    cmds:
+      - "{{.VENV}}/python benchmarks/profile_scale.py --n-neurons 1000 5000 10000"
+
+  benchmark:gpu:
+    desc: Benchmark on Modal A100
+    cmds:
+      - modal run benchmarks/modal_benchmark.py
+
+  docs:
+    desc: Build the Sphinx HTML documentation
+    cmds:
+      - "{{.VENV}}/sphinx-build -b html docs docs/_build/html"
+
+  clean:
+    desc: Remove Python caches, coverage output, and Rust build artifacts
+    cmds:
+      - find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+      - find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
+      - rm -rf .mypy_cache coverage.xml htmlcov/
+      - cd rust && cargo clean

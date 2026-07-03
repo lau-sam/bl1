@@ -150,7 +150,24 @@ server.update_frame(mon.render_frame(640, 480))
 
 ## Installation
 
-**From source (recommended):**
+**Fastest path — [devbox](https://www.jetify.com/devbox) + [task](https://taskfile.dev) (recommended):**
+
+`devbox` provisions the exact toolchain (Python 3.12, Rust, `task`) in an isolated
+shell — no global installs — and `task` is the single entry point for every command.
+
+```bash
+git clone https://github.com/lau-sam/bl1.git
+cd bl1
+devbox shell        # drops you into a shell with the full toolchain
+task install        # Python venv (.venv) + Rust workspace build
+task tui            # launch the interactive cockpit
+task                # list every available command
+```
+
+Already have Python and Rust? Skip devbox and use `task` directly, or install
+manually:
+
+**Manual from source:**
 
 ```bash
 git clone https://github.com/lau-sam/bl1.git
@@ -320,33 +337,35 @@ make docs
 
 ## Development
 
-BL-1 uses a Makefile-driven workflow with [Ruff](https://docs.astral.sh/ruff/) for linting and formatting, [mypy](https://mypy-lang.org/) for type checking, and [pytest](https://pytest.org/) for testing.
+BL-1 uses a [task](https://taskfile.dev)-driven workflow with [Ruff](https://docs.astral.sh/ruff/) for linting and formatting, [mypy](https://mypy-lang.org/) for type checking, and [pytest](https://pytest.org/) for testing. Run `task` with no arguments to list every command.
 
 ```bash
 # Lint and format check
-make lint
+task lint
 
 # Auto-fix lint issues
-make lint-fix
+task lint:fix
 
 # Type checking
-make typecheck
+task typecheck
 
 # Run tests (excludes slow calibration tests)
-make test
+task test          # Python
+task test:rust     # Rust workspace
+task test:all      # both
 
 # Tests with coverage report
-make coverage
+task coverage
 
 # Code quality metrics (docstring coverage, dead code, complexity, security)
-make quality
+task quality
 
-# All checks
-make all
+# All Python checks
+task all
 
 # Benchmarks (local CPU / Modal A100)
-make benchmark
-make benchmark-gpu
+task benchmark
+task benchmark:gpu
 ```
 
 ---
@@ -365,6 +384,17 @@ dependency-light simulation and a keyboard-driven control panel.
 | `bl1-mea` | 64-channel and HD-MEA layouts, neuron→electrode mapping, spike detection, LFP |
 | `bl1-sim` | Neuron placement, distance-dependent connectivity, `Culture` factory, YAML config loader |
 | `bl1-tui` | The `bl1` binary: a terminal UI to run and inspect simulations |
+
+From the repo root, `task` wraps the common commands:
+
+```bash
+task tui             # launch the terminal UI (reads configs/*.yaml)
+task tui:release     # same, optimized release build
+task sim             # print one preview's statistics, no TTY
+task test:rust       # run the unit tests
+```
+
+Or drive Cargo directly from `rust/`:
 
 ```bash
 cd rust
