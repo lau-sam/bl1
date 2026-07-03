@@ -1,0 +1,11 @@
+[package]
+name = "bl1-analysis"
+description = "Burst detection (Wagenaar) and criticality metrics (Beggs & Plenz) for spike rasters."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bl1-core.workspace = true

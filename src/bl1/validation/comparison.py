@@ -69,10 +69,12 @@ def compute_culture_statistics(
         - ``branching_ratio`` -- Branching ratio sigma (1.0 =
           critical).
         - ``avalanche_size_exponent`` -- Estimated power-law exponent
-          for avalanche size distribution (via log-log linear
-          regression).  Negative for power-law decays.
+          for the avalanche size distribution (maximum-likelihood,
+          Clauset et al. 2009).  Returned as ``-alpha`` (negative for
+          power-law decays; reference ``-1.5``).
         - ``avalanche_duration_exponent`` -- Estimated power-law
-          exponent for avalanche duration distribution.
+          exponent for the avalanche duration distribution (reference
+          ``-2.0``).
         - ``population_rate_cv`` -- Coefficient of variation of the
           population spike count time series.
         - ``fraction_active`` -- Fraction of neurons that fire at
@@ -202,69 +204,84 @@ def compute_culture_statistics(
 # ============================================================================
 
 
-def _estimate_power_law_exponent(values: NDArray) -> float:
-    """Estimate power-law exponent via log-log linear regression.
+def _mle_alpha(tail: NDArray, xmin: float) -> float:
+    """Discrete MLE of the power-law exponent for ``x >= xmin``.
 
-    This is a quick-and-dirty estimate suitable for validation
-    comparison.  For rigorous power-law testing, use the
-    ``powerlaw`` package or maximum-likelihood methods (Clauset
-    et al. 2009).
+    Uses the discrete maximum-likelihood approximation of Clauset,
+    Shalizi & Newman (2009), eq. 3.7:
+
+        alpha = 1 + n * [ sum_i ln(x_i / (xmin - 1/2)) ]^{-1}
+
+    Returns the (positive) pdf exponent ``alpha``, or ``nan`` if the
+    log-sum is non-positive (degenerate).
+    """
+    n = len(tail)
+    log_sum = float(np.sum(np.log(tail / (xmin - 0.5))))
+    if log_sum <= 0.0:
+        return float("nan")
+    return 1.0 + n / log_sum
+
+
+def _estimate_power_law_exponent(values: NDArray) -> float:
+    """Estimate the power-law exponent by maximum likelihood.
+
+    Fits a power law ``p(x) ~ x^{-alpha}`` to the tail of *values* using
+    the discrete maximum-likelihood estimator of Clauset, Shalizi &
+    Newman (2009), with the lower cutoff ``xmin`` selected by minimising
+    the Kolmogorov-Smirnov distance between the empirical and fitted
+    distributions.  This replaces the earlier log-log CCDF regression,
+    which is known to be biased (Clauset et al. 2009, §3).
+
+    The returned value is ``-alpha``: negative for a power-law decay and
+    directly comparable to the reference avalanche exponents (size
+    ``-1.5``, duration ``-2.0``; Beggs & Plenz 2003).
 
     Args:
         values: 1-D array of positive values (e.g. avalanche sizes).
 
     Returns:
-        Slope of log-log regression (negative for power-law decay),
-        or ``nan`` if insufficient data.
+        ``-alpha`` (negative for power-law decay), or ``nan`` if there
+        is insufficient data.
     """
     if len(values) < 5:
         return float("nan")
 
-    # Only use positive values
-    pos = values[values > 0]
+    pos = np.asarray(values, dtype=np.float64)
+    pos = pos[pos > 0]
     if len(pos) < 5:
         return float("nan")
 
-    # Build empirical complementary CDF (survival function)
-    sorted_vals = np.sort(pos)
-    n = len(sorted_vals)
-
-    # Use unique values and their frequencies for cleaner regression
-    unique_vals, counts = np.unique(sorted_vals, return_counts=True)
+    sorted_pos = np.sort(pos)
+    unique_vals = np.unique(sorted_pos)
     if len(unique_vals) < 3:
         return float("nan")
 
-    # Cumulative probability P(X >= x)
-    cum_counts = np.cumsum(counts[::-1])[::-1]
-    survival = cum_counts / n
+    # Select xmin by KS minimisation over candidate cutoffs, keeping a
+    # tail of at least 5 points (Clauset et al. 2009, §3.3).
+    best_alpha = float("nan")
+    best_ks = float("inf")
+    for xmin in unique_vals[:-2]:
+        tail = sorted_pos[sorted_pos >= xmin]
+        if len(tail) < 5:
+            continue
+        alpha = _mle_alpha(tail, xmin)
+        if not math.isfinite(alpha):
+            continue
+        # KS distance vs the fitted (continuous) power-law CDF on the tail.
+        cdf_emp = np.arange(1, len(tail) + 1) / len(tail)
+        cdf_fit = 1.0 - (tail / xmin) ** (-(alpha - 1.0))
+        ks = float(np.max(np.abs(cdf_emp - cdf_fit)))
+        if ks < best_ks:
+            best_ks = ks
+            best_alpha = alpha
 
-    log_x = np.log(unique_vals)
-    log_y = np.log(survival)
+    # Fallback: fit the whole positive support if no tail cutoff qualified.
+    if not math.isfinite(best_alpha):
+        best_alpha = _mle_alpha(sorted_pos, float(unique_vals[0]))
+        if not math.isfinite(best_alpha):
+            return float("nan")
 
-    # Filter out any -inf or nan
-    valid = np.isfinite(log_x) & np.isfinite(log_y)
-    log_x = log_x[valid]
-    log_y = log_y[valid]
-
-    if len(log_x) < 3:
-        return float("nan")
-
-    # Simple linear regression: log_y = slope * log_x + intercept
-    # The power-law exponent alpha relates to slope as:
-    # P(X >= x) ~ x^{-(alpha-1)}, so slope = -(alpha-1)
-    # We return slope directly (negative for power-law decay)
-    n_pts = len(log_x)
-    sum_x = np.sum(log_x)
-    sum_y = np.sum(log_y)
-    sum_xy = np.sum(log_x * log_y)
-    sum_xx = np.sum(log_x * log_x)
-
-    denom = n_pts * sum_xx - sum_x * sum_x
-    if abs(denom) < 1e-15:
-        return float("nan")
-
-    slope = (n_pts * sum_xy - sum_x * sum_y) / denom
-    return float(slope)
+    return -best_alpha
 
 
 # ============================================================================

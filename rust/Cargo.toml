@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/lau-sam/bl1"
+authors = ["BL-1 Contributors"]
+
+[workspace.dependencies]
+bl1-core = { path = "crates/bl1-core" }
+bl1-analysis = { path = "crates/bl1-analysis" }
+bl1-mea = { path = "crates/bl1-mea" }
+bl1-sim = { path = "crates/bl1-sim" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+rand = "0.9"
+rand_pcg = "0.9"
+ratatui = "0.29"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

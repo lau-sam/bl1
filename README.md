@@ -104,7 +104,7 @@ doom-neuron's SDK mode generates random spikes. BL-1 provides neurons that actua
 
 ```bash
 # Clone both repos
-git clone https://github.com/m9h/bl1.git
+git clone https://github.com/lau-sam/bl1.git
 git clone https://github.com/SeanCole02/doom-neuron.git
 
 # Shared venv
@@ -153,7 +153,7 @@ server.update_frame(mon.render_frame(640, 480))
 **From source (recommended):**
 
 ```bash
-git clone https://github.com/your-org/bl1.git
+git clone https://github.com/lau-sam/bl1.git
 cd bl1
 pip install -e ".[dev]"
 ```
@@ -350,6 +350,32 @@ make benchmark-gpu
 ```
 
 ---
+
+## Rust: forward simulator + terminal UI
+
+The `rust/` directory hosts a Cargo workspace that ports the **forward** simulation to native
+Rust and adds a lazygit-style terminal UI for interactive exploration. It complements the Python
+package: the differentiable training pipeline stays in JAX, while the Rust core gives fast,
+dependency-light simulation and a keyboard-driven control panel.
+
+| Crate | Purpose |
+|-------|---------|
+| `bl1-core` | Izhikevich/AdEx neurons, AMPA/NMDA/GABA_A/GABA_B synapses, STP, STDP, CSR connectivity, integrator |
+| `bl1-analysis` | Burst detection (Wagenaar), branching ratio and avalanche exponents (Beggs & Plenz, MLE) |
+| `bl1-mea` | 64-channel and HD-MEA layouts, neuron→electrode mapping, spike detection, LFP |
+| `bl1-sim` | Neuron placement, distance-dependent connectivity, `Culture` factory, YAML config loader |
+| `bl1-tui` | The `bl1` binary: a terminal UI to run and inspect simulations |
+
+```bash
+cd rust
+cargo test                 # run the unit tests
+cargo run -p bl1-tui       # launch the terminal UI (reads ../configs/*.yaml)
+cargo run -p bl1-tui -- --headless   # print one preview's statistics, no TTY
+```
+
+In the UI, `j`/`k` select a config, `+`/`-` cap the neuron count, `[`/`]` change the preview
+window, `s` reseeds, `Enter`/`r` runs, and `q` quits. Per-step ordering, cell-type mixes, and
+receptor kinetics mirror the JAX model; the YAML loader reads the same `configs/*.yaml` files.
 
 ## License
 
