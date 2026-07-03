@@ -1,0 +1,10 @@
+[package]
+name = "bl1-core"
+description = "Forward spiking-network simulator: Izhikevich/AdEx neurons, conductance synapses, plasticity."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

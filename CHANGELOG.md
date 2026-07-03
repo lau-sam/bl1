@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dependabot.yml` (pip, GitHub Actions, and Cargo ecosystems).
 - Release workflow (`.github/workflows/release.yml`): tagging `v*` publishes a GitHub Release
   with notes extracted from this changelog.
+- Rust Cargo workspace under `rust/` with the `bl1-core` crate: a forward spiking-network
+  simulator (Izhikevich/AdEx neurons, AMPA/NMDA/GABA_A/GABA_B synapses, Tsodyks-Markram
+  short-term plasticity, trace-based STDP, CSR connectivity) whose per-step ordering matches
+  the reference JAX implementation.
 
 ### Fixed
 
