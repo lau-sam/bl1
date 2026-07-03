@@ -122,9 +122,7 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_dashboard(frame: &mut Frame, app: &App, area: Rect) {
     let dim = Style::default().fg(Color::DarkGray);
     let head = Style::default().fg(CYAN).add_modifier(Modifier::BOLD);
-    let val = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
+    let val = Style::default().add_modifier(Modifier::BOLD);
 
     let last = match &app.result {
         Some(r) => format!(
@@ -347,9 +345,7 @@ fn draw_raster(frame: &mut Frame, app: &mut App, area: Rect) {
                 ),
                 Span::styled(
                     format!("Simulating…  {secs:.1}s"),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().add_modifier(Modifier::BOLD),
                 ),
             ]),
         ];
@@ -393,13 +389,23 @@ fn render_raster_lines(res: &RunResult, width: usize, rows: usize) -> Vec<Line<'
 
     let mut sums = vec![0f32; rows * cols];
     let mut counts = vec![0u32; rows * cols];
-    for t in 0..n_steps {
+    // Subsample: a 5000-neuron × 8000-step raster is 40M cells — iterating all
+    // of them every redraw makes the UI lag. Stride so the work is bounded to a
+    // few times the display resolution (the panel is a downsampled preview).
+    let t_stride = (n_steps / (cols * 4).max(1)).max(1);
+    let n_stride = (n_neurons / (rows * 4).max(1)).max(1);
+    let mut t = 0;
+    while t < n_steps {
         let c = (t * cols / n_steps).min(cols - 1);
-        for (j, &s) in raster.row(t).iter().enumerate() {
+        let row_t = raster.row(t);
+        let mut j = 0;
+        while j < n_neurons {
             let r = (j * rows / n_neurons).min(rows - 1);
-            sums[r * cols + c] += s;
+            sums[r * cols + c] += row_t[j];
             counts[r * cols + c] += 1;
+            j += n_stride;
         }
+        t += t_stride;
     }
 
     const SHADES: [char; 6] = [' ', '·', '░', '▒', '▓', '█'];
@@ -461,12 +467,7 @@ fn draw_stats(frame: &mut Frame, app: &mut App, area: Rect) {
 fn stat(label: &str, value: String) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:<20}"), Style::default().fg(Color::Gray)),
-        Span::styled(
-            value,
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(value, Style::default().add_modifier(Modifier::BOLD)),
     ])
 }
 
@@ -577,9 +578,7 @@ fn draw_results_detail(frame: &mut Frame, app: &App, area: Rect) {
 fn stat_inline(label: &str, value: String) -> Span<'static> {
     Span::styled(
         format!("{label}: {value}"),
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
+        Style::default().add_modifier(Modifier::BOLD),
     )
 }
 
