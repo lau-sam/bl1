@@ -411,8 +411,11 @@ The UI is a mouse- and keyboard-driven cockpit with three views (**Dashboard**, 
   in the bar at the bottom.
 - **Simulate:** click a config or use `j`/`k` to select it; adjust the neuron cap and preview
   window with the on-screen `[-]` `[+]` buttons (or `+`/`-` and `[`/`]`); `s` reseeds;
-  `Enter`/`r` or the **Run** button starts a preview. The raster scrolls with the mouse wheel.
-- **Results:** browse every run from the session with the metrics that came out of it.
+  `Enter`/`r` or the **Run** button starts a preview. The simulation runs on a background
+  thread — the UI stays responsive with a live spinner while it computes. The raster scrolls
+  with the mouse wheel.
+- **Results:** browse every run from the session with the metrics that came out of it; press
+  `e` to export the whole session to `results/session_runs.csv`.
 
 Per-step ordering, cell-type mixes, and receptor kinetics mirror the JAX model; the YAML loader
 reads the same `configs/*.yaml` files.

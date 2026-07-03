@@ -21,6 +21,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(1), // tab bar
             Constraint::Min(0),    // body
+            Constraint::Length(1), // status line
             Constraint::Length(1), // keybar
         ])
         .split(frame.area());
@@ -33,11 +34,39 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Tab::Results => draw_results(frame, app, root[1]),
     }
 
-    draw_keybar(frame, app, root[2]);
+    draw_status(frame, app, root[2]);
+    draw_keybar(frame, app, root[3]);
 
     if app.show_help {
         draw_help(frame, app);
     }
+}
+
+/// Braille spinner frame for the given elapsed time.
+fn spinner(elapsed_ms: u128) -> char {
+    const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    FRAMES[((elapsed_ms / 100) as usize) % FRAMES.len()]
+}
+
+/// The always-visible status line: latest message, prefixed with a spinner
+/// while a background simulation is running.
+fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
+    let mut spans = Vec::new();
+    if app.is_running() {
+        spans.push(Span::styled(
+            format!(" {} ", spinner(app.run_elapsed_ms())),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(
+        app.status.clone(),
+        Style::default().fg(Color::Gray),
+    ));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +319,29 @@ fn draw_raster(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    if app.is_running() {
+        let secs = app.run_elapsed_ms() as f64 / 1000.0;
+        let banner = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    format!("  {}  ", spinner(app.run_elapsed_ms())),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("Simulating…  {secs:.1}s"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(banner), inner);
+        return;
+    }
 
     let (lines, total_rows) = match &app.result {
         Some(res) => {
@@ -551,6 +603,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
         ],
         Tab::Results => vec![
             ("j/k", "browse"),
+            ("e", "export csv"),
             ("Tab", "view"),
             ("?", "help"),
             ("q", "quit"),
@@ -629,6 +682,7 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_head("Results"));
             lines.push(help_row("j / k / click", "browse past runs"));
             lines.push(help_row("wheel", "scroll the list"));
+            lines.push(help_row("e", "export all runs to results/session_runs.csv"));
         }
     }
     lines.push(Line::from(""));

@@ -12,3 +12,5 @@ data/
 .claude/
 .devbox/
 rust/target/
+results/
+rust/results/

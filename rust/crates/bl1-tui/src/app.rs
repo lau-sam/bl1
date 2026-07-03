@@ -1,7 +1,11 @@
 //! Application state and simulation driving for the TUI.
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
+use std::time::Instant;
 
 use bl1_analysis::{
     avalanche_distributions, branching_ratio, burst_statistics, detect_bursts,
@@ -97,6 +101,17 @@ pub struct RunResult {
     pub n_exc_rows: usize,
 }
 
+/// A simulation running on a background thread, plus the parameter snapshot
+/// needed to record it when the result arrives.
+struct PendingRun {
+    rx: Receiver<RunResult>,
+    config_name: String,
+    neuron_cap: usize,
+    preview_ms: f32,
+    seed: u64,
+    started: Instant,
+}
+
 /// Whole-application state.
 pub struct App {
     pub configs: Vec<ConfigEntry>,
@@ -116,6 +131,7 @@ pub struct App {
     pub results_selected: usize,
     pub regions: Regions,
     pub configs_from_dir: usize,
+    pending: Option<PendingRun>,
 }
 
 impl App {
@@ -160,6 +176,7 @@ impl App {
             results_selected: 0,
             regions: Regions::default(),
             configs_from_dir,
+            pending: None,
         }
     }
 
@@ -286,7 +303,7 @@ impl App {
     fn click_simulate(&mut self, pos: Position, y: u16) {
         let r = &self.regions;
         if r.btn_run.contains(pos) {
-            self.run_selected();
+            self.start_run();
         } else if r.btn_neuron_inc.contains(pos) {
             self.increase_neurons();
         } else if r.btn_neuron_dec.contains(pos) {
@@ -342,80 +359,210 @@ impl App {
 
     // --- simulation --------------------------------------------------------
 
-    /// Run a capped preview simulation of the selected config.
-    pub fn run_selected(&mut self) {
+    /// True while a background simulation is in flight.
+    pub fn is_running(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Milliseconds elapsed since the current run started (0 when idle).
+    pub fn run_elapsed_ms(&self) -> u128 {
+        self.pending
+            .as_ref()
+            .map(|p| p.started.elapsed().as_millis())
+            .unwrap_or(0)
+    }
+
+    /// Parse the selected config, returning `(name, config)` or setting a status
+    /// message and returning `None` on error.
+    fn prepare_run(&mut self) -> Option<(String, Config)> {
         self.active_tab = Tab::Simulate;
         let Some(entry) = self.configs.get(self.selected) else {
             self.status = "No configuration selected.".to_string();
-            return;
+            return None;
         };
-        let config_name = entry.name.clone();
-        let mut config = match Config::from_yaml_str(&entry.yaml) {
-            Ok(c) => c,
+        let name = entry.name.clone();
+        match Config::from_yaml_str(&entry.yaml) {
+            Ok(c) => Some((name, c)),
             Err(e) => {
                 self.status = format!("Config parse error: {e}");
-                return;
+                None
             }
+        }
+    }
+
+    /// Kick off a preview on a background thread so the UI stays responsive.
+    /// A no-op if a run is already in flight.
+    pub fn start_run(&mut self) {
+        if self.pending.is_some() {
+            return;
+        }
+        let Some((config_name, config)) = self.prepare_run() else {
+            return;
         };
+        let (cap, ms, seed) = (self.neuron_cap, self.preview_ms, self.seed);
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(compute_run(config, cap, ms, seed));
+        });
+        self.pending = Some(PendingRun {
+            rx,
+            config_name,
+            neuron_cap: cap,
+            preview_ms: ms,
+            seed,
+            started: Instant::now(),
+        });
+        self.status = format!("Simulating {cap} neurons for {ms:.0} ms…");
+    }
 
-        // Cap size for interactive responsiveness.
-        config.culture.n_neurons = config.culture.n_neurons.min(self.neuron_cap).max(1);
-        let dt = config.simulation.dt_ms.max(0.01);
-        let duration_ms = self.preview_ms;
-        let n_steps = ((duration_ms / dt).round() as usize).max(1);
+    /// Poll the background run; call once per event-loop tick.
+    pub fn poll_run(&mut self) {
+        let Some(p) = &self.pending else { return };
+        match p.rx.try_recv() {
+            Ok(result) => {
+                let (name, cap, ms, seed) =
+                    (p.config_name.clone(), p.neuron_cap, p.preview_ms, p.seed);
+                self.pending = None;
+                self.record_result(result, name, cap, ms, seed);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.pending = None;
+                self.status = "Simulation failed (worker thread stopped).".to_string();
+            }
+        }
+    }
 
-        let culture = Culture::build(&config, self.seed);
-        let drive = culture.background_current(n_steps, self.seed.wrapping_mul(2654435761));
-        let mut state = culture.make_sim_state();
-        let raster = simulate(&culture.network, &mut state, &drive, n_steps, dt);
+    /// Run a capped preview synchronously (used by `--headless` and tests).
+    pub fn run_selected(&mut self) {
+        let Some((name, config)) = self.prepare_run() else {
+            return;
+        };
+        let (cap, ms, seed) = (self.neuron_cap, self.preview_ms, self.seed);
+        let result = compute_run(config, cap, ms, seed);
+        self.record_result(result, name, cap, ms, seed);
+    }
 
-        let thr = config.burst_detection.threshold_std;
-        let min_dur = config.burst_detection.min_duration_ms;
-        let bursts = detect_bursts(&raster, dt, thr, min_dur);
-        let bstats = burst_statistics(&bursts, n_steps as f32 * dt);
-        let sigma = branching_ratio(&raster, dt, 4.0);
-        let (sizes, _dur) = avalanche_distributions(&raster, dt, 4.0);
-        let size_exp = estimate_power_law_exponent(&sizes);
-        let mean_fr_hz = raster.mean_firing_rate_hz(dt);
-
+    /// Store a finished run: update the raster/stats panels and the history.
+    fn record_result(
+        &mut self,
+        result: RunResult,
+        config_name: String,
+        neuron_cap: usize,
+        preview_ms: f32,
+        seed: u64,
+    ) {
         self.raster_scroll = 0;
         self.history.push(HistoryEntry {
             config_name,
-            neuron_cap: self.neuron_cap,
-            preview_ms: duration_ms,
-            seed: self.seed,
-            n_neurons: culture.n_neurons(),
-            mean_fr_hz,
-            n_bursts: bstats.n_bursts,
-            burst_rate_per_min: bstats.burst_rate_per_min,
-            branching_ratio: sigma,
+            neuron_cap,
+            preview_ms,
+            seed,
+            n_neurons: result.n_neurons,
+            mean_fr_hz: result.mean_fr_hz,
+            n_bursts: result.n_bursts,
+            burst_rate_per_min: result.burst_rate_per_min,
+            branching_ratio: result.branching_ratio,
         });
         self.results_selected = self.history.len() - 1;
-
-        self.result = Some(RunResult {
-            n_neurons: culture.n_neurons(),
-            n_exc: culture.n_exc,
-            dt_ms: dt,
-            duration_ms,
-            n_bursts: bstats.n_bursts,
-            mean_fr_hz,
-            burst_rate_per_min: bstats.burst_rate_per_min,
-            ibi_mean_ms: bstats.ibi_mean_ms,
-            ibi_cv: bstats.ibi_cv,
-            recruitment: bstats.recruitment_mean,
-            branching_ratio: sigma,
-            avalanche_size_exp: size_exp,
-            n_exc_rows: culture.n_exc,
-            raster,
-        });
         self.status = format!(
             "Ran {} neurons for {:.0} ms (seed {}). {} bursts detected.",
-            culture.n_neurons(),
-            duration_ms,
-            self.seed,
-            bstats.n_bursts
+            result.n_neurons, result.duration_ms, seed, result.n_bursts
         );
+        self.result = Some(result);
     }
+
+    /// Write the session's run history to a CSV file and return its path.
+    pub fn export_results(&mut self) {
+        if self.history.is_empty() {
+            self.status = "Nothing to export yet — run a preview first.".to_string();
+            return;
+        }
+        match self.write_results_csv() {
+            Ok(path) => self.status = format!("Exported {} runs to {path}", self.history.len()),
+            Err(e) => self.status = format!("Export failed: {e}"),
+        }
+    }
+
+    fn write_results_csv(&self) -> std::io::Result<String> {
+        let dir = Path::new("results");
+        fs::create_dir_all(dir)?;
+        let path = dir.join("session_runs.csv");
+        let mut file = fs::File::create(&path)?;
+        writeln!(
+            file,
+            "config,neuron_cap,preview_ms,seed,n_neurons,mean_fr_hz,n_bursts,burst_rate_per_min,branching_ratio"
+        )?;
+        for h in &self.history {
+            writeln!(
+                file,
+                "{},{},{:.0},{},{},{:.4},{},{:.4},{:.4}",
+                h.config_name,
+                h.neuron_cap,
+                h.preview_ms,
+                h.seed,
+                h.n_neurons,
+                h.mean_fr_hz,
+                h.n_bursts,
+                h.burst_rate_per_min,
+                h.branching_ratio,
+            )?;
+        }
+        Ok(path.display().to_string())
+    }
+}
+
+/// Build a culture from `config`, run a capped preview, and analyze the raster.
+/// Pure and self-contained so it can run on a background thread.
+fn compute_run(mut config: Config, neuron_cap: usize, preview_ms: f32, seed: u64) -> RunResult {
+    config.culture.n_neurons = config.culture.n_neurons.min(neuron_cap).max(1);
+    let dt = config.simulation.dt_ms.max(0.01);
+    let n_steps = ((preview_ms / dt).round() as usize).max(1);
+
+    let culture = Culture::build(&config, seed);
+    let drive = culture.background_current(n_steps, seed.wrapping_mul(2654435761));
+    let mut state = culture.make_sim_state();
+    let raster = simulate(&culture.network, &mut state, &drive, n_steps, dt);
+
+    let thr = config.burst_detection.threshold_std;
+    let min_dur = config.burst_detection.min_duration_ms;
+    let bursts = detect_bursts(&raster, dt, thr, min_dur);
+    let bstats = burst_statistics(&bursts, n_steps as f32 * dt);
+    let sigma = branching_ratio(&raster, dt, 4.0);
+    let (sizes, _dur) = avalanche_distributions(&raster, dt, 4.0);
+    let size_exp = estimate_power_law_exponent(&sizes);
+    let mean_fr_hz = raster.mean_firing_rate_hz(dt);
+
+    RunResult {
+        n_neurons: culture.n_neurons(),
+        n_exc: culture.n_exc,
+        dt_ms: dt,
+        duration_ms: preview_ms,
+        n_bursts: bstats.n_bursts,
+        mean_fr_hz,
+        burst_rate_per_min: bstats.burst_rate_per_min,
+        ibi_mean_ms: bstats.ibi_mean_ms,
+        ibi_cv: bstats.ibi_cv,
+        recruitment: bstats.recruitment_mean,
+        branching_ratio: sigma,
+        avalanche_size_exp: size_exp,
+        n_exc_rows: culture.n_exc,
+        raster,
+    }
+}
+
+/// Two always-available presets so the TUI is useful without any config files.
+fn builtin_presets() -> Vec<ConfigEntry> {
+    vec![
+        ConfigEntry {
+            name: "[preset] quick-200".to_string(),
+            yaml: "culture:\n  n_neurons: 200\n  substrate_um: [800, 800]\n  p_max: 0.3\n  g_exc: 0.12\n  g_inh: 0.36\nsimulation:\n  dt_ms: 0.5\nstp:\n  enabled: true\n".to_string(),
+        },
+        ConfigEntry {
+            name: "[preset] wagenaar-like".to_string(),
+            yaml: "culture:\n  n_neurons: 1000\n  ei_ratio: 0.8\n  substrate_um: [3000, 3000]\n  lambda_um: 200.0\n  p_max: 0.21\n  g_exc: 0.12\n  g_inh: 0.36\nsimulation:\n  dt_ms: 0.5\nsynapses:\n  nmda_ratio: 0.37\nstp:\n  enabled: true\n  excitatory:\n    U: 0.30\n    tau_rec_ms: 800.0\n    tau_fac_ms: 0.001\n  inhibitory:\n    U: 0.04\n    tau_rec_ms: 100.0\n    tau_fac_ms: 1000.0\nburst_detection:\n  threshold_std: 1.5\n  min_duration_ms: 50.0\n".to_string(),
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -474,19 +621,35 @@ mod tests {
         assert_eq!(app.history.len(), 1);
         assert!(app.result.is_some());
         assert!(app.active_tab == Tab::Simulate);
+        assert!(!app.is_running());
     }
-}
 
-/// Two always-available presets so the TUI is useful without any config files.
-fn builtin_presets() -> Vec<ConfigEntry> {
-    vec![
-        ConfigEntry {
-            name: "[preset] quick-200".to_string(),
-            yaml: "culture:\n  n_neurons: 200\n  substrate_um: [800, 800]\n  p_max: 0.3\n  g_exc: 0.12\n  g_inh: 0.36\nsimulation:\n  dt_ms: 0.5\nstp:\n  enabled: true\n".to_string(),
-        },
-        ConfigEntry {
-            name: "[preset] wagenaar-like".to_string(),
-            yaml: "culture:\n  n_neurons: 1000\n  ei_ratio: 0.8\n  substrate_um: [3000, 3000]\n  lambda_um: 200.0\n  p_max: 0.21\n  g_exc: 0.12\n  g_inh: 0.36\nsimulation:\n  dt_ms: 0.5\nsynapses:\n  nmda_ratio: 0.37\nstp:\n  enabled: true\n  excitatory:\n    U: 0.30\n    tau_rec_ms: 800.0\n    tau_fac_ms: 0.001\n  inhibitory:\n    U: 0.04\n    tau_rec_ms: 100.0\n    tau_fac_ms: 1000.0\nburst_detection:\n  threshold_std: 1.5\n  min_duration_ms: 50.0\n".to_string(),
-        },
-    ]
+    #[test]
+    fn export_without_history_reports_and_writes_nothing() {
+        let mut app = App::new(None);
+        app.export_results();
+        assert!(app.status.contains("Nothing to export"));
+    }
+
+    #[test]
+    fn background_run_completes_and_records() {
+        let mut app = App::new(None);
+        app.neuron_cap = 60;
+        app.preview_ms = 500.0;
+        app.start_run();
+        assert!(app.is_running());
+        // A second start is a no-op while one is in flight.
+        app.start_run();
+
+        for _ in 0..2000 {
+            app.poll_run();
+            if !app.is_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!app.is_running(), "run should finish");
+        assert_eq!(app.history.len(), 1);
+        assert!(app.result.is_some());
+    }
 }

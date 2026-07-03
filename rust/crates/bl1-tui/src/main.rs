@@ -51,8 +51,11 @@ fn main() -> Result<()> {
 
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
+        app.poll_run();
         terminal.draw(|frame| ui::draw(frame, app))?;
-        if event::poll(Duration::from_millis(200))? {
+        // Poll briefly while a run is in flight so the spinner keeps ticking.
+        let timeout = if app.is_running() { 80 } else { 200 };
+        if event::poll(Duration::from_millis(timeout))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key.code),
                 Event::Mouse(m) => handle_mouse(app, m),
@@ -86,11 +89,12 @@ fn handle_key(app: &mut App, code: KeyCode) {
         KeyCode::Char(']') => app.increase_duration(),
         KeyCode::Char('[') => app.decrease_duration(),
         KeyCode::Char('s') => app.reseed(),
+        KeyCode::Char('e') => app.export_results(),
         KeyCode::Enter | KeyCode::Char('r') => {
             if app.active_tab == Tab::Dashboard {
                 app.set_tab(Tab::Simulate);
             } else {
-                app.run_selected();
+                app.start_run();
             }
         }
         _ => {}
