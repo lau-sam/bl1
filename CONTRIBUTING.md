@@ -7,7 +7,7 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## Development setup
 
-BL-1 targets Python 3.10+ (developed and CI-tested on 3.12).
+BL-1 targets Python 3.10+ (developed and tested on 3.12).
 
 ```bash
 git clone https://github.com/lau-sam/bl1.git
@@ -21,7 +21,8 @@ For GPU acceleration, install the JAX variant matching your CUDA version — see
 
 ## Quality bar
 
-All of the following must pass before a pull request is merged:
+This is a volunteer-run project with **no CI**: please run the checks locally before
+opening a pull request. All of the following must pass:
 
 ```bash
 make lint        # ruff check + format check
@@ -69,3 +70,14 @@ cargo run -p bl1-tui      # launch the TUI
 
 Please use the GitHub issue templates. For scientific/model-accuracy issues, cite the
 relevant paper and the equation or metric affected so the discrepancy can be verified.
+
+## Releasing
+
+Releases are cut manually (there is no release automation). To publish version `X.Y.Z`:
+
+1. Bump `version` in `pyproject.toml` (and `rust/Cargo.toml` if the Rust workspace changed).
+2. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new `[X.Y.Z] - <date>` heading and
+   update the comparison links at the bottom.
+3. Commit, then tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push the tag.
+4. Create the GitHub release from the tag, pasting the changelog section as the notes
+   (for example: `gh release create vX.Y.Z --notes-file <(sed -n '/## \[X.Y.Z\]/,/## \[/p' CHANGELOG.md)`).
