@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - README clone URLs now point to the canonical repository.
+- Avalanche size/duration exponents are now estimated by maximum likelihood with
+  KS-based `xmin` selection (Clauset et al. 2009) instead of a biased log-log CCDF
+  regression. The estimator now returns `-alpha`, directly comparable to the Beggs &
+  Plenz reference exponents (size `-1.5`, duration `-2.0`).
 
 ## [0.1.0] - 2026-07-03
 
