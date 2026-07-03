@@ -52,9 +52,14 @@ fn main() -> Result<()> {
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
         app.poll_run();
+        app.train_tick();
         terminal.draw(|frame| ui::draw(frame, app))?;
-        // Poll briefly while a run is in flight so the spinner keeps ticking.
-        let timeout = if app.is_running() { 80 } else { 200 };
+        // Redraw quickly while a sim runs or training is live (smooth animation).
+        let timeout = if app.is_running() || app.training {
+            30
+        } else {
+            200
+        };
         if event::poll(Duration::from_millis(timeout))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key.code),
@@ -74,6 +79,28 @@ fn handle_key(app: &mut App, code: KeyCode) {
         app.show_help = false;
         return;
     }
+    // Train tab consumes a few keys for the live training controls.
+    if app.active_tab == Tab::Train {
+        match code {
+            KeyCode::Char(' ') => {
+                app.toggle_training();
+                return;
+            }
+            KeyCode::Char('r') => {
+                app.reset_trainer();
+                return;
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                app.train_faster();
+                return;
+            }
+            KeyCode::Char('-') => {
+                app.train_slower();
+                return;
+            }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Char('?') => app.toggle_help(),
@@ -81,7 +108,8 @@ fn handle_key(app: &mut App, code: KeyCode) {
         KeyCode::BackTab => app.prev_tab(),
         KeyCode::Char('1') => app.set_tab(Tab::Dashboard),
         KeyCode::Char('2') => app.set_tab(Tab::Simulate),
-        KeyCode::Char('3') => app.set_tab(Tab::Results),
+        KeyCode::Char('3') => app.set_tab(Tab::Train),
+        KeyCode::Char('4') => app.set_tab(Tab::Results),
         KeyCode::Char('j') | KeyCode::Down => app.browse_next(),
         KeyCode::Char('k') | KeyCode::Up => app.browse_prev(),
         KeyCode::Char('+') | KeyCode::Char('=') => app.increase_neurons(),

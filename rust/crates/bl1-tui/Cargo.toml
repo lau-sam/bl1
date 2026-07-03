@@ -16,6 +16,7 @@ bl1-core.workspace = true
 bl1-analysis.workspace = true
 bl1-mea.workspace = true
 bl1-sim.workspace = true
+bl1-games.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 clap.workspace = true

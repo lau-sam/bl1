@@ -20,16 +20,18 @@ use ratatui::layout::{Position, Rect};
 pub enum Tab {
     Dashboard,
     Simulate,
+    Train,
     Results,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 3] = [Tab::Dashboard, Tab::Simulate, Tab::Results];
+    pub const ALL: [Tab; 4] = [Tab::Dashboard, Tab::Simulate, Tab::Train, Tab::Results];
 
     pub fn title(self) -> &'static str {
         match self {
             Tab::Dashboard => "Dashboard",
             Tab::Simulate => "Simulate",
+            Tab::Train => "Train",
             Tab::Results => "Results",
         }
     }
@@ -132,6 +134,11 @@ pub struct App {
     pub regions: Regions,
     pub configs_from_dir: usize,
     pending: Option<PendingRun>,
+    // --- live training (Train tab) ---
+    pub trainer: Option<bl1_games::PursuitAgent>,
+    pub training: bool,
+    pub train_speed: usize,
+    pub train_seed: u64,
 }
 
 impl App {
@@ -177,6 +184,10 @@ impl App {
             regions: Regions::default(),
             configs_from_dir,
             pending: None,
+            trainer: None,
+            training: false,
+            train_speed: 20,
+            train_seed: 1,
         }
     }
 
@@ -240,6 +251,59 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    // --- live training (Train tab) ---
+
+    fn ensure_trainer(&mut self) {
+        if self.trainer.is_none() {
+            self.trainer = Some(bl1_games::PursuitAgent::new(
+                bl1_games::PursuitParams::default(),
+                self.train_seed,
+            ));
+        }
+    }
+
+    /// Start/pause the live training loop.
+    pub fn toggle_training(&mut self) {
+        self.ensure_trainer();
+        self.training = !self.training;
+        self.status = if self.training {
+            "Training… the culture is learning to play Pong.".to_string()
+        } else {
+            "Training paused.".to_string()
+        };
+    }
+
+    /// Fresh, untrained culture on a new seed.
+    pub fn reset_trainer(&mut self) {
+        self.train_seed = self.train_seed.wrapping_add(1);
+        self.trainer = Some(bl1_games::PursuitAgent::new(
+            bl1_games::PursuitParams::default(),
+            self.train_seed,
+        ));
+        self.training = false;
+        self.status = format!("Trainer reset (seed {}).", self.train_seed);
+    }
+
+    pub fn train_faster(&mut self) {
+        self.train_speed = (self.train_speed * 2).min(1000);
+    }
+
+    pub fn train_slower(&mut self) {
+        self.train_speed = (self.train_speed / 2).max(1);
+    }
+
+    /// Advance the trainer by `train_speed` game steps if playing. Call once per
+    /// event-loop tick.
+    pub fn train_tick(&mut self) {
+        if self.training
+            && let Some(t) = self.trainer.as_mut()
+        {
+            for _ in 0..self.train_speed {
+                t.step();
+            }
+        }
+    }
+
     /// `j` / down-arrow: context-dependent — scroll the focused raster, browse
     /// the results list, or move to the next config.
     pub fn browse_next(&mut self) {
@@ -253,7 +317,7 @@ impl App {
                     self.results_selected = (self.results_selected + 1).min(self.history.len() - 1);
                 }
             }
-            Tab::Dashboard => {}
+            Tab::Dashboard | Tab::Train => {}
         }
     }
 
@@ -265,7 +329,7 @@ impl App {
             }
             Tab::Simulate => self.select_prev(),
             Tab::Results => self.results_selected = self.results_selected.saturating_sub(1),
-            Tab::Dashboard => {}
+            Tab::Dashboard | Tab::Train => {}
         }
     }
 
@@ -296,7 +360,7 @@ impl App {
                     }
                 }
             }
-            Tab::Dashboard => {}
+            Tab::Dashboard | Tab::Train => {}
         }
     }
 

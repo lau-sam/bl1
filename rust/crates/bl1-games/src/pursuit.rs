@@ -22,13 +22,16 @@
 //! signal `Δw ∝ x` stays well-scaled regardless of how sparsely the culture
 //! fires. The paddle is placed at the decoded target (direct control); adding
 //! realistic smooth-pursuit paddle dynamics is a further step.
+//!
+//! The agent exposes a single-step API ([`PursuitAgent::step`]) plus observable
+//! state so a live UI can advance training frame by frame and watch it learn.
 
 use bl1_core::{IzhParams, NeuronState, build_population, izhikevich_step};
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
 
 use crate::closed_loop::RunLog;
-use crate::pong::{Action, Event, Pong};
+use crate::pong::{Action, Event, Pong, PongState};
 
 /// Parameters for the pursuit (REINFORCE) agent.
 #[derive(Debug, Clone)]
@@ -70,7 +73,7 @@ impl Default for PursuitParams {
     }
 }
 
-/// Reward-modulated Hebbian pursuit agent.
+/// Reward-modulated Hebbian pursuit agent with an incremental training step.
 pub struct PursuitAgent {
     p: PursuitParams,
     s_params: IzhParams,
@@ -78,133 +81,225 @@ pub struct PursuitAgent {
     /// Readout weights and bias for the Gaussian policy mean.
     w: Vec<f32>,
     b: f32,
-    /// Per-position reward baseline (one bin per input neuron).
+    /// Per-position reward baseline (one bin per band).
     baseline: Vec<f32>,
     pong: Pong,
     rng: Pcg64,
+
+    // --- persistent play/learning state (advanced one step at a time) ---
+    game: PongState,
+    step_idx: usize,
+    hits: u32,
+    misses: u32,
+    events: Vec<(usize, Event)>,
+    rally_lengths: Vec<u32>,
+    pop_rate: Vec<f32>,
+
+    // --- observable snapshots for a live UI ---
+    features: Vec<f32>,
+    last_target: f32,
+    last_sigma: f32,
+    last_reward: f32,
+
+    // scratch buffers
+    s_current: Vec<f32>,
 }
 
 impl PursuitAgent {
     pub fn new(p: PursuitParams, seed: u64) -> Self {
         let s_params = build_population(p.n_input * p.per_band, 1.0).params;
         let s = NeuronState::resting(&s_params);
+        let mut rng = Pcg64::seed_from_u64(seed.wrapping_add(0x2545F491));
+        let pong = Pong {
+            ball_speed: p.ball_speed,
+            ..Pong::default()
+        };
+        let game = pong.reset(&mut rng);
         Self {
             w: vec![0.0; p.n_input],
             b: 0.5, // start with a centred paddle target
             baseline: vec![0.0; p.n_input],
+            features: vec![0.0; p.n_input],
+            s_current: vec![0.0; p.n_input * p.per_band],
             s,
             s_params,
-            pong: Pong {
-                ball_speed: p.ball_speed,
-                ..Pong::default()
-            },
-            rng: Pcg64::seed_from_u64(seed.wrapping_add(0x2545F491)),
+            pong,
+            rng,
+            game,
+            step_idx: 0,
+            hits: 0,
+            misses: 0,
+            events: Vec::new(),
+            rally_lengths: Vec::new(),
+            pop_rate: Vec::new(),
+            last_target: 0.5,
+            last_sigma: p.explore0,
+            last_reward: 0.0,
             p,
         }
     }
 
-    /// Play `n_game_steps` and return the learning log.
+    /// Advance training by one game step; returns the event produced.
     // Hot loops index parallel per-band arrays (currents, features, weights).
     #[allow(clippy::needless_range_loop)]
-    pub fn run(&mut self, n_game_steps: usize) -> RunLog {
-        let p = self.p.clone();
+    pub fn step(&mut self) -> Event {
+        let p = &self.p;
         let ni = p.n_input;
-        let mut game = self.pong.reset(&mut self.rng);
-
-        let mut log = RunLog {
-            rally_lengths: Vec::new(),
-            events: Vec::new(),
-            hits: 0,
-            misses: 0,
-            population_rate_hz: Vec::with_capacity(n_game_steps),
-        };
-
         let pb = p.per_band;
-        let ns = ni * pb;
-        let mut s_current = vec![0.0f32; ns];
-        let mut x = vec![0.0f32; ni]; // one feature per band
 
-        for step in 0..n_game_steps {
-            // Sensory encoding: Gaussian bump at the ball's Y, applied to every
-            // neuron of each band.
-            let center = game.ball_y.clamp(0.0, 1.0) * (ni as f32 - 1.0);
-            for b in 0..ni {
-                let d = b as f32 - center;
-                let cur = p.input_amp * (-(d * d) / (2.0 * p.input_sigma * p.input_sigma)).exp();
-                for k in 0..pb {
-                    s_current[b * pb + k] = cur;
-                }
+        // Sensory encoding: Gaussian bump at the ball's Y, applied to every
+        // neuron of each band.
+        let center = self.game.ball_y.clamp(0.0, 1.0) * (ni as f32 - 1.0);
+        for b in 0..ni {
+            let d = b as f32 - center;
+            let cur = p.input_amp * (-(d * d) / (2.0 * p.input_sigma * p.input_sigma)).exp();
+            for k in 0..pb {
+                self.s_current[b * pb + k] = cur;
             }
-
-            // Run the spiking population; feature = mean spike rate per band
-            // (averaging over `per_band` neurons denoises the rate code).
-            x.iter_mut().for_each(|v| *v = 0.0);
-            let mut total = 0.0f32;
-            for _ in 0..p.window_steps {
-                izhikevich_step(&mut self.s, &self.s_params, &s_current, p.dt);
-                for b in 0..ni {
-                    for k in 0..pb {
-                        let sp = self.s.spikes[b * pb + k];
-                        x[b] += sp;
-                        total += sp;
-                    }
-                }
-            }
-            // Normalise to a sum-1 population code: this makes the feature scale
-            // independent of the absolute firing rate, so the learning signal
-            // (Δw ∝ x) is well-scaled regardless of how sparsely the culture
-            // fires. Without this, tiny rates give a vanishing gradient.
-            let sum: f32 = x.iter().sum();
-            if sum > 1e-6 {
-                for v in x.iter_mut() {
-                    *v /= sum;
-                }
-            }
-            log.population_rate_hz
-                .push(total / ns as f32 / (p.window_steps as f32 * p.dt / 1000.0));
-
-            // Gaussian policy: mean μ = w·x + b, sample the paddle target.
-            let mu: f32 = self.b + self.w.iter().zip(&x).map(|(w, xi)| w * xi).sum::<f32>();
-            let frac = (step as f32 / p.explore_decay_steps as f32).min(1.0);
-            let sigma = p.explore0 + (p.explore_min - p.explore0) * frac;
-            let target = (mu + sigma * gaussian(&mut self.rng)).clamp(0.0, 1.0);
-            let perturb = target - mu;
-
-            // Dense tracking reward and per-position baseline.
-            let reward = 1.0 - 2.0 * (target - game.ball_y).abs();
-            let bin = (game.ball_y.clamp(0.0, 1.0) * (ni as f32 - 1.0)).round() as usize;
-            let rpe = reward - self.baseline[bin];
-            self.baseline[bin] =
-                (1.0 - p.reward_alpha) * self.baseline[bin] + p.reward_alpha * reward;
-
-            // Three-factor update: Δw = η (R−R̄) · perturbation · x.
-            let g = p.learning_rate * rpe * perturb;
-            for i in 0..ni {
-                self.w[i] += g * x[i];
-            }
-            self.b += g;
-
-            // Advance the game: place the paddle directly at the decoded target
-            // (isolates the readout from paddle-lag dynamics), then step.
-            let mut g = game;
-            g.paddle_y = target;
-            let (next, event) = self.pong.step(&g, Action::Stay, &mut self.rng);
-            match event {
-                Event::Hit => {
-                    log.hits += 1;
-                    log.events.push((step, event));
-                }
-                Event::Miss => {
-                    log.misses += 1;
-                    log.rally_lengths.push(game.rally_length);
-                    log.events.push((step, event));
-                }
-                Event::None => {}
-            }
-            game = next;
         }
 
-        log
+        // Run the spiking population; feature = mean spike rate per band.
+        self.features.iter_mut().for_each(|v| *v = 0.0);
+        let mut total = 0.0f32;
+        for _ in 0..p.window_steps {
+            izhikevich_step(&mut self.s, &self.s_params, &self.s_current, p.dt);
+            for b in 0..ni {
+                for k in 0..pb {
+                    let sp = self.s.spikes[b * pb + k];
+                    self.features[b] += sp;
+                    total += sp;
+                }
+            }
+        }
+        // Sum-1 normalisation: keeps the feature scale (and hence Δw ∝ x)
+        // independent of the absolute firing rate.
+        let sum: f32 = self.features.iter().sum();
+        if sum > 1e-6 {
+            for v in self.features.iter_mut() {
+                *v /= sum;
+            }
+        }
+        let ns = (ni * pb) as f32;
+        self.pop_rate
+            .push(total / ns / (p.window_steps as f32 * p.dt / 1000.0));
+
+        // Gaussian policy: mean μ = w·x + b, sample the paddle target.
+        let mu: f32 = self.b
+            + self
+                .w
+                .iter()
+                .zip(&self.features)
+                .map(|(w, xi)| w * xi)
+                .sum::<f32>();
+        let frac = (self.step_idx as f32 / p.explore_decay_steps as f32).min(1.0);
+        let sigma = p.explore0 + (p.explore_min - p.explore0) * frac;
+        let target = (mu + sigma * gaussian(&mut self.rng)).clamp(0.0, 1.0);
+        let perturb = target - mu;
+
+        // Dense tracking reward and per-position baseline.
+        let reward = 1.0 - 2.0 * (target - self.game.ball_y).abs();
+        let bin = (self.game.ball_y.clamp(0.0, 1.0) * (ni as f32 - 1.0)).round() as usize;
+        let rpe = reward - self.baseline[bin];
+        self.baseline[bin] = (1.0 - p.reward_alpha) * self.baseline[bin] + p.reward_alpha * reward;
+
+        // Three-factor update: Δw = η (R−R̄) · perturbation · x.
+        let g = p.learning_rate * rpe * perturb;
+        for i in 0..ni {
+            self.w[i] += g * self.features[i];
+        }
+        self.b += g;
+
+        // Place the paddle at the decoded target (direct control), then step.
+        let mut g_state = self.game;
+        g_state.paddle_y = target;
+        let (next, event) = self.pong.step(&g_state, Action::Stay, &mut self.rng);
+        match event {
+            Event::Hit => {
+                self.hits += 1;
+                self.events.push((self.step_idx, event));
+            }
+            Event::Miss => {
+                self.misses += 1;
+                self.rally_lengths.push(self.game.rally_length);
+                self.events.push((self.step_idx, event));
+            }
+            Event::None => {}
+        }
+        self.game = next;
+        self.last_target = target;
+        self.last_sigma = sigma;
+        self.last_reward = reward;
+        self.step_idx += 1;
+        event
+    }
+
+    /// Play `n_game_steps` and return the accumulated learning log.
+    pub fn run(&mut self, n_game_steps: usize) -> RunLog {
+        for _ in 0..n_game_steps {
+            self.step();
+        }
+        RunLog {
+            rally_lengths: self.rally_lengths.clone(),
+            events: self.events.clone(),
+            hits: self.hits,
+            misses: self.misses,
+            population_rate_hz: self.pop_rate.clone(),
+        }
+    }
+
+    // --- observable state for a live UI ---
+
+    pub fn game(&self) -> &PongState {
+        &self.game
+    }
+    pub fn features(&self) -> &[f32] {
+        &self.features
+    }
+    pub fn step_idx(&self) -> usize {
+        self.step_idx
+    }
+    pub fn hits(&self) -> u32 {
+        self.hits
+    }
+    pub fn misses(&self) -> u32 {
+        self.misses
+    }
+    pub fn last_target(&self) -> f32 {
+        self.last_target
+    }
+    pub fn sigma(&self) -> f32 {
+        self.last_sigma
+    }
+
+    /// Overall hit rate so far.
+    pub fn hit_rate(&self) -> f32 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f32 / total as f32
+        }
+    }
+
+    /// Hit rate over the most recent `n` events (recent skill).
+    pub fn recent_hit_rate(&self, n: usize) -> f32 {
+        if self.events.is_empty() {
+            return 0.0;
+        }
+        let start = self.events.len().saturating_sub(n);
+        let slice = &self.events[start..];
+        slice.iter().filter(|(_, e)| *e == Event::Hit).count() as f32 / slice.len() as f32
+    }
+
+    /// Hit rate per consecutive block of `block` events — the learning curve.
+    pub fn hit_rate_curve(&self, block: usize) -> Vec<f32> {
+        if block == 0 {
+            return Vec::new();
+        }
+        self.events
+            .chunks(block)
+            .map(|c| c.iter().filter(|(_, e)| *e == Event::Hit).count() as f32 / c.len() as f32)
+            .collect()
     }
 }
 
@@ -243,5 +338,13 @@ mod tests {
             "expected positive learning trend, got {:+.1} pts",
             log.improvement() * 100.0
         );
+    }
+
+    #[test]
+    fn single_step_advances_state() {
+        let mut a = PursuitAgent::new(PursuitParams::default(), 3);
+        a.step();
+        assert_eq!(a.step_idx(), 1);
+        assert_eq!(a.features().len(), 16);
     }
 }

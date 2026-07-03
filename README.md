@@ -404,8 +404,8 @@ cargo run -p bl1-tui       # launch the terminal UI (reads ../configs/*.yaml)
 cargo run -p bl1-tui -- --headless   # print one preview's statistics, no TTY
 ```
 
-The UI is a mouse- and keyboard-driven cockpit with three views (**Dashboard**, **Simulate**,
-**Results**), inspired by lazygit and k9s:
+The UI is a mouse- and keyboard-driven cockpit with four views (**Dashboard**, **Simulate**,
+**Train**, **Results**), inspired by lazygit and k9s:
 
 - **Navigate:** click a tab, or press `Tab` / `1` `2` `3` to switch views. `?` opens a
   context-sensitive help overlay for the current view; the most-used keys are always shown
@@ -415,6 +415,10 @@ The UI is a mouse- and keyboard-driven cockpit with three views (**Dashboard**, 
   `Enter`/`r` or the **Run** button starts a preview. The simulation runs on a background
   thread — the UI stays responsive with a live spinner while it computes. The raster scrolls
   with the mouse wheel.
+- **Train:** watch the culture **learn Pong live** — press Space to start, `+`/`-` to change speed,
+  `r` to reset. A Canvas renders the game (ball + tracking paddle) in real time next to a live
+  hit-rate learning curve (Chart), skill gauges, and the culture's sensory bump (Sparkline). Built
+  from ratatui's Canvas / Chart / Gauge / Sparkline widgets.
 - **Results:** browse every run from the session with the metrics that came out of it; press
   `e` to export the whole session to `results/session_runs.csv`.
 

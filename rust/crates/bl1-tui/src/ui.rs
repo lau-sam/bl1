@@ -6,8 +6,13 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points, Rectangle};
+use ratatui::widgets::{
+    Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
+    Paragraph, Sparkline, Wrap,
+};
 
 use crate::app::{App, Focus, RunResult, Tab};
 
@@ -31,6 +36,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.active_tab {
         Tab::Dashboard => draw_dashboard(frame, app, root[1]),
         Tab::Simulate => draw_simulate(frame, app, root[1]),
+        Tab::Train => draw_train(frame, app, root[1]),
         Tab::Results => draw_results(frame, app, root[1]),
     }
 
@@ -144,6 +150,14 @@ fn draw_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         Line::from("  3. Tune neurons / duration with the [-] [+] buttons."),
         Line::from("  4. Press Enter (or click Run) — watch the raster + stats."),
         Line::from("  5. Review past runs in the Results tab."),
+        Line::from(vec![
+            Span::raw("  6. Open "),
+            Span::styled(
+                "Train",
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" (press 3) and hit Space — watch the culture learn Pong live."),
+        ]),
         Line::from(""),
         Line::from(Span::styled("System status", head)),
         kv("configs loaded", format!("{}", app.configs.len()), val),
@@ -583,6 +597,211 @@ fn truncate(s: &str, max: usize) -> String {
 // Keybar + help overlay
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Train view (live learning)
+// ---------------------------------------------------------------------------
+
+fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(trainer) = app.trainer.as_ref() else {
+        let p = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Live training — a cultured network learns to play Pong.",
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Press Space to start; watch the paddle track the ball and the",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                "  hit-rate curve climb as reward-modulated plasticity kicks in.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .block(Block::default().borders(Borders::ALL).title(" Train "));
+        frame.render_widget(p, area);
+        return;
+    };
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(9)])
+        .split(area);
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(outer[0]);
+    draw_pong_canvas(frame, trainer, top[0], app.training);
+    draw_learning_chart(frame, trainer, top[1]);
+
+    let bottom = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(36),
+            Constraint::Percentage(30),
+            Constraint::Percentage(34),
+        ])
+        .split(outer[1]);
+    draw_train_gauges(frame, trainer, bottom[0]);
+    draw_sensory(frame, trainer, bottom[1]);
+    draw_train_stats(frame, trainer, app, bottom[2]);
+}
+
+fn draw_pong_canvas(
+    frame: &mut Frame,
+    trainer: &bl1_games::PursuitAgent,
+    area: Rect,
+    playing: bool,
+) {
+    let g = trainer.game();
+    let ball = [(g.ball_x as f64, g.ball_y as f64)];
+    let py = g.paddle_y as f64;
+    let title = if playing {
+        " Pong — live "
+    } else {
+        " Pong — paused "
+    };
+    let canvas = Canvas::default()
+        .block(panel(title, playing))
+        .marker(Marker::Braille)
+        .x_bounds([0.0, 1.0])
+        .y_bounds([0.0, 1.0])
+        .paint(move |ctx| {
+            ctx.draw(&Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+                color: Color::DarkGray,
+            });
+            ctx.draw(&CanvasLine {
+                x1: 0.97,
+                y1: (py - 0.1).max(0.0),
+                x2: 0.97,
+                y2: (py + 0.1).min(1.0),
+                color: CYAN,
+            });
+            ctx.draw(&Points {
+                coords: &ball,
+                color: Color::Yellow,
+            });
+        });
+    frame.render_widget(canvas, area);
+}
+
+fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+    let curve = trainer.hit_rate_curve(20);
+    let block = panel(" Learning curve — hit % per 20 events ", false);
+    if curve.len() < 2 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  collecting events…",
+                Style::default().fg(Color::DarkGray),
+            )))
+            .block(block),
+            area,
+        );
+        return;
+    }
+    let pts: Vec<(f64, f64)> = curve
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i as f64, v as f64 * 100.0))
+        .collect();
+    let x_max = (pts.len() - 1) as f64;
+    let datasets = vec![
+        Dataset::default()
+            .name("hit %")
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Green))
+            .data(&pts),
+    ];
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(Axis::default().bounds([0.0, x_max]))
+        .y_axis(
+            Axis::default()
+                .bounds([0.0, 100.0])
+                .labels(vec!["0", "50", "100"]),
+        );
+    frame.render_widget(chart, area);
+}
+
+fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+    let block = panel(" Skill ", false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(2),
+            Constraint::Length(2),
+        ])
+        .split(inner);
+
+    let hit = trainer.hit_rate().clamp(0.0, 1.0);
+    let recent = trainer.recent_hit_rate(200).clamp(0.0, 1.0);
+    let explore = (trainer.sigma() / 0.3).clamp(0.0, 1.0);
+
+    frame.render_widget(
+        Gauge::default()
+            .gauge_style(Style::default().fg(Color::Green))
+            .ratio(hit as f64)
+            .label(format!("overall hit {:.0}%", hit * 100.0)),
+        rows[0],
+    );
+    frame.render_widget(
+        Gauge::default()
+            .gauge_style(Style::default().fg(CYAN))
+            .ratio(recent as f64)
+            .label(format!("recent hit {:.0}%", recent * 100.0)),
+        rows[1],
+    );
+    frame.render_widget(
+        Gauge::default()
+            .gauge_style(Style::default().fg(Color::Magenta))
+            .ratio(explore as f64)
+            .label(format!("exploration {:.2}", trainer.sigma())),
+        rows[2],
+    );
+}
+
+fn draw_sensory(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+    let block = panel(" Sensory bump (culture) ", false);
+    let feats: Vec<u64> = trainer
+        .features()
+        .iter()
+        .map(|&v| (v * 1000.0) as u64)
+        .collect();
+    let spark = Sparkline::default()
+        .block(block)
+        .data(&feats)
+        .style(Style::default().fg(Color::Magenta));
+    frame.render_widget(spark, area);
+}
+
+fn draw_train_stats(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, app: &App, area: Rect) {
+    let g = trainer.game();
+    let lines = vec![
+        stat("step", format!("{}", trainer.step_idx())),
+        stat(
+            "hits / misses",
+            format!("{} / {}", trainer.hits(), trainer.misses()),
+        ),
+        stat("speed", format!("{} steps/frame", app.train_speed)),
+        stat("seed", format!("{}", app.train_seed)),
+        stat("ball y", format!("{:.2}", g.ball_y)),
+        stat(
+            "paddle → target",
+            format!("{:.2} → {:.2}", g.paddle_y, trainer.last_target()),
+        ),
+    ];
+    frame.render_widget(Paragraph::new(lines).block(panel(" State ", false)), area);
+}
+
 fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
     let groups: Vec<(&str, &str)> = match app.active_tab {
         Tab::Dashboard => vec![
@@ -597,6 +816,14 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("+/-", "neurons"),
             ("[ ]", "duration"),
             ("s", "reseed"),
+            ("Tab", "view"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        Tab::Train => vec![
+            ("Space", "play/pause"),
+            ("r", "reset"),
+            ("+/-", "speed"),
             ("Tab", "view"),
             ("?", "help"),
             ("q", "quit"),
@@ -677,6 +904,21 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("s / [reseed]", "advance the random seed"));
             lines.push(help_row("Enter / r / Run", "run a preview simulation"));
             lines.push(help_row("wheel over raster", "scroll neuron rows"));
+        }
+        Tab::Train => {
+            lines.push(help_head("Train"));
+            lines.push(help_row("Space", "start / pause live training"));
+            lines.push(help_row("r", "reset to a fresh culture (new seed)"));
+            lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  The culture learns Pong by reward-modulated Hebbian pursuit —",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  watch the paddle track the ball and the hit-rate curve climb.",
+                Style::default().fg(Color::DarkGray),
+            )));
         }
         Tab::Results => {
             lines.push(help_head("Results"));
@@ -799,5 +1041,20 @@ mod tests {
             render(&mut app, 12, 6);
             render(&mut app, 1, 1);
         }
+    }
+
+    #[test]
+    fn renders_train_view_with_an_active_trainer() {
+        let mut app = App::new(None);
+        app.set_tab(Tab::Train);
+        app.toggle_training(); // creates the trainer and starts it
+        if let Some(t) = app.trainer.as_mut() {
+            for _ in 0..60 {
+                t.step();
+            }
+        }
+        render(&mut app, 120, 40);
+        render(&mut app, 40, 16);
+        render(&mut app, 1, 1);
     }
 }
