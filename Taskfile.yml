@@ -59,6 +59,12 @@ tasks:
     cmds:
       - cargo run --release -p bl1-games --bin bl1-pong -- {{.CLI_ARGS}}
 
+  pong-sweep:
+    desc: Multi-seed parameter sweep for closed-loop Pong learning (writes results/pong_sweep.csv)
+    dir: rust
+    cmds:
+      - cargo run --release -p bl1-games --bin bl1-pong-sweep -- {{.CLI_ARGS}}
+
   # --- Test ----------------------------------------------------------------
   test:
     desc: Run Python tests (excludes slow calibration tests)

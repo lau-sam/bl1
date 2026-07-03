@@ -39,8 +39,10 @@ impl Default for ThreeFactorParams {
             a_minus: 1.0,
             tau_plus: 20.0,
             tau_minus: 40.0,
-            tau_elig: 1000.0,
-            learning_rate: 0.008,
+            // Tuned by the multi-seed sweep (bl1-pong-sweep): a long eligibility
+            // trace + higher learning rate gave the most consistent learning.
+            tau_elig: 2000.0,
+            learning_rate: 0.016,
             w_max: 0.5,
             w_min: 0.0,
         }

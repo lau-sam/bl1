@@ -73,6 +73,10 @@ fn main() -> Result<()> {
     println!("  hit rate:        {:.1}%", log.hit_rate() * 100.0);
     println!("  rallies played:  {}", log.rally_lengths.len());
     println!("  mean rally:      {mean_rally:.2}");
+    println!(
+        "  improvement:     {:+.0} pts (2nd half − 1st half hit rate)",
+        log.improvement() * 100.0
+    );
     if total > 0 {
         let curve = log.hit_rate_curve(cli.block);
         println!(

@@ -432,11 +432,16 @@ consolidates the synapses whose activity led to a hit.
 task pong -- --neurons 400 --steps 4000        # or: cargo run --release -p bl1-games --bin bl1-pong
 ```
 
-It prints hits/misses, mean rally length, and a hit-rate learning curve, and can export a per-event
-CSV (`--csv path`). **Status:** the loop is fully wired, reproducible per seed, and tested; the culture
-tracks the ball above the static-paddle baseline (~40% vs ~16%) and on some seeds shows a clear
-learning trend (e.g. 32% → 83% hit rate across a run). The trend is not yet consistent across seeds —
-stabilising it (reward-prediction-error baseline, tuning) is ongoing. Doom is next.
+It prints hits/misses, mean rally length, a learning-improvement score, and a hit-rate curve, and can
+export a per-event CSV (`--csv path`). A multi-seed parameter sweep lives in `bl1-pong-sweep`
+(`task pong-sweep`), scoring configs by their seed-averaged learning improvement.
+
+**Status — honest:** the loop is fully wired, reproducible per seed, and tested. The culture reliably
+**tracks the ball above the static-paddle baseline** (~36–40% hit rate vs ~16% for a frozen paddle),
+so the sensorimotor loop works. A robust *learning* trend does **not** yet hold: the seed-averaged
+improvement at full scale is variance-dominated (≈ 0 ± ~10 pts), and the sweep's best small-scale
+config does not transfer cleanly. Getting reward-modulated STDP to learn Pong consistently is an open
+research problem here — contributions and ideas welcome. Doom is next.
 
 ## License
 

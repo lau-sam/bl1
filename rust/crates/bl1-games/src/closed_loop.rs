@@ -44,7 +44,9 @@ impl Default for LoopConfig {
             n_sensory: 8,
             baseline_rate_hz: 3.0,
             ball_speed: 0.03,
-            sensory_amplitude: 10.0,
+            // Tuned by the sweep: lower sensory amplitude avoids saturating the
+            // culture and preserves the differential motor signal.
+            sensory_amplitude: 8.0,
             plasticity: ThreeFactorParams::default(),
             reward: Reward::default(),
         }
