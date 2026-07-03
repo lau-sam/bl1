@@ -7,7 +7,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use bl1_games::{AgentParams, ClosedLoop, Event, LoopConfig, RstdpAgent, RunLog};
+use bl1_games::{
+    AgentParams, ClosedLoop, Event, LoopConfig, PursuitAgent, PursuitParams, RstdpAgent, RunLog,
+};
 use bl1_sim::Config;
 use clap::Parser;
 
@@ -42,6 +44,10 @@ struct Cli {
     #[arg(long)]
     rstdp: bool,
 
+    /// Use the reward-modulated Hebbian pursuit agent (node perturbation).
+    #[arg(long)]
+    pursuit: bool,
+
     /// Write a per-event CSV to this path.
     #[arg(long, value_name = "PATH")]
     csv: Option<PathBuf>,
@@ -50,7 +56,14 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let log: RunLog = if cli.rstdp {
+    let log: RunLog = if cli.pursuit {
+        println!(
+            "Running pursuit (node-perturbation) Pong agent: {} game steps, seed {} ...",
+            cli.steps, cli.seed
+        );
+        let mut agent = PursuitAgent::new(PursuitParams::default(), cli.seed);
+        agent.run(cli.steps)
+    } else if cli.rstdp {
         println!(
             "Running R-STDP Pong agent: {} game steps, seed {} ...",
             cli.steps, cli.seed
