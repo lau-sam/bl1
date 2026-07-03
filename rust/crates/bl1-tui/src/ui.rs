@@ -791,17 +791,30 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area:
 }
 
 fn draw_sensory(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
-    let block = panel(" Sensory bump (culture) ", false);
+    let block = panel(" Sensory input — ball-Y place code ", false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "16 Y-bands · the lit bar = ball height the culture senses",
+            Style::default().fg(Color::DarkGray),
+        ))),
+        rows[0],
+    );
     let feats: Vec<u64> = trainer
         .features()
         .iter()
         .map(|&v| (v * 1000.0) as u64)
         .collect();
     let spark = Sparkline::default()
-        .block(block)
         .data(&feats)
         .style(Style::default().fg(Color::Magenta));
-    frame.render_widget(spark, area);
+    frame.render_widget(spark, rows[1]);
 }
 
 fn draw_train_stats(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, app: &App, area: Rect) {
@@ -932,12 +945,23 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("r", "reset to a fresh culture (new seed)"));
             lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
             lines.push(Line::from(""));
+            lines.push(help_head("Reading the panels"));
+            lines.push(help_row("Pong", "yellow ball crosses left→right; cyan paddle should track it"));
+            lines.push(help_row("Learning curve", "hit % over events played — climbs as it learns"));
+            lines.push(help_row("Skill", "overall & recent hit rate; exploration shrinks over time"));
+            lines.push(help_row("Sensory input", "16 Y-bands; the lit bar = ball height the culture senses"));
+            lines.push(help_row("State", "step count, hits/misses, and ball-y vs decoded paddle target"));
+            lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "  The culture learns Pong by reward-modulated Hebbian pursuit —",
+                "  The culture learns Pong by reward-modulated Hebbian pursuit: it",
                 Style::default().fg(Color::DarkGray),
             )));
             lines.push(Line::from(Span::styled(
-                "  watch the paddle track the ball and the hit-rate curve climb.",
+                "  reads the ball's height from the sensory bump and moves the paddle",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  there; hits reward the synapses that produced the move.",
                 Style::default().fg(Color::DarkGray),
             )));
         }

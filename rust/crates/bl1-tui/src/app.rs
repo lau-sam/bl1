@@ -155,6 +155,10 @@ impl App {
             for path in files {
                 if path.extension().and_then(|s| s.to_str()) == Some("yaml")
                     && let Ok(yaml) = fs::read_to_string(&path)
+                    // Only list files that parse as a simulation config. This
+                    // skips Python training-only configs (e.g. wagenaar_burst.yaml
+                    // has just a `training:` section, no `culture:`).
+                    && Config::from_yaml_str(&yaml).is_ok()
                 {
                     let name = path
                         .file_name()
