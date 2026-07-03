@@ -2,10 +2,11 @@
 //!
 //! Each game step runs one neural window: decode a paddle action from the motor
 //! regions, advance the game, deliver FEP feedback for the event, encode the new
-//! ball position as sensory stimulation, simulate the window, and apply STDP at
-//! every sub-step. Weights change online, so the culture can reorganise.
+//! ball position as sensory stimulation, simulate the window, and update weights
+//! with reward-modulated STDP at every sub-step (hit rewards, miss punishes).
+//! Weights change online, so the culture can reorganise toward hitting.
 
-use bl1_core::{CsrMatrix, SimState, StdpParams, StdpState, simulate};
+use bl1_core::{CsrMatrix, SimState, simulate};
 use bl1_mea::{MeaConfig, Position, build_neuron_electrode_map};
 use bl1_sim::{Config, Culture};
 use rand::{Rng, SeedableRng};
@@ -14,6 +15,7 @@ use rand_pcg::Pcg64;
 use crate::decoding::MotorDecoder;
 use crate::encoding::SensoryEncoder;
 use crate::feedback::FeedbackProtocol;
+use crate::plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};
 use crate::pong::{Event, Pong, PongState};
 
 /// Tunable parameters for one closed-loop experiment.
@@ -27,7 +29,10 @@ pub struct LoopConfig {
     pub baseline_rate_hz: f32,
     /// Ball speed (field fractions per game step); larger = more rallies per run.
     pub ball_speed: f32,
-    pub stdp: StdpParams,
+    /// Reward-modulated STDP parameters.
+    pub plasticity: ThreeFactorParams,
+    /// Dopamine-like reward signal (hit/miss amplitudes + decay).
+    pub reward: Reward,
 }
 
 impl Default for LoopConfig {
@@ -37,14 +42,8 @@ impl Default for LoopConfig {
             n_sensory: 8,
             baseline_rate_hz: 3.0,
             ball_speed: 0.03,
-            stdp: StdpParams {
-                a_plus: 0.008,
-                a_minus: 0.0084,
-                tau_plus: 20.0,
-                tau_minus: 50.0,
-                w_max: 0.3,
-                w_min: 0.0,
-            },
+            plasticity: ThreeFactorParams::default(),
+            reward: Reward::default(),
         }
     }
 }
@@ -96,8 +95,8 @@ pub struct ClosedLoop {
     encoder: SensoryEncoder,
     decoder: MotorDecoder,
     feedback: FeedbackProtocol,
-    stdp_params: StdpParams,
-    stdp_state: StdpState,
+    plasticity: ThreeFactorStdp,
+    reward: Reward,
     /// Neuron indices reachable by each electrode (for sensory injection).
     stim_neurons: Vec<Vec<usize>>,
     rng: Pcg64,
@@ -152,6 +151,9 @@ impl ClosedLoop {
         };
         let game = pong.reset(&mut rng);
 
+        let nnz = culture.network.w_exc.data.len();
+        let plasticity = ThreeFactorStdp::new(n, nnz, cfg.plasticity.clone());
+
         Self {
             culture,
             state,
@@ -160,8 +162,8 @@ impl ClosedLoop {
             encoder: SensoryEncoder::new(sensory),
             decoder,
             feedback: FeedbackProtocol::default(),
-            stdp_params: cfg.stdp.clone(),
-            stdp_state: StdpState::zeros(n),
+            plasticity,
+            reward: cfg.reward.clone(),
             stim_neurons,
             rng,
             dt,
@@ -200,11 +202,13 @@ impl ClosedLoop {
                 Event::Hit => {
                     log.hits += 1;
                     log.events.push((step, event));
+                    self.reward.reward(); // dopamine pulse: consolidate eligible synapses
                 }
                 Event::Miss => {
                     log.misses += 1;
                     log.rally_lengths.push(prev.rally_length);
                     log.events.push((step, event));
+                    self.reward.punish(); // negative reward: depress eligible synapses
                 }
                 Event::None => {}
             }
@@ -222,7 +226,10 @@ impl ClosedLoop {
                 }
             }
 
-            // 5. Simulate the window one sub-step at a time, applying STDP.
+            // 5. Simulate the window one sub-step at a time. Reward-modulated
+            //    STDP accumulates eligibility every step and, while the reward
+            //    signal is non-zero (just after an event), consolidates it into
+            //    the weights. The reward decays across sub-steps.
             window_counts.iter_mut().for_each(|v| *v = 0.0);
             let mut total = 0.0f32;
             for sub in 0..self.steps_per_game {
@@ -238,12 +245,13 @@ impl ClosedLoop {
                 }
                 let _ = simulate(&self.culture.network, &mut self.state, &drive, 1, self.dt);
                 let spikes = &self.state.neuron.spikes;
-                self.stdp_state.step(
-                    &self.stdp_params,
+                self.plasticity.step(
                     spikes,
                     &mut self.culture.network.w_exc,
+                    self.reward.level,
                     self.dt,
                 );
+                self.reward.decay(self.dt);
                 for j in 0..n {
                     window_counts[j] += spikes[j];
                     total += spikes[j];

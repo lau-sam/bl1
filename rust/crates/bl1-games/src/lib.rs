@@ -11,7 +11,9 @@ pub mod closed_loop;
 pub mod decoding;
 pub mod encoding;
 pub mod feedback;
+pub mod plasticity;
 pub mod pong;
 
 pub use closed_loop::{ClosedLoop, LoopConfig, RunLog};
+pub use plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};
 pub use pong::{Action, Event, Pong, PongState};

@@ -424,17 +424,19 @@ reads the same `configs/*.yaml` files.
 ### Closed-loop Pong (DishBrain)
 
 `bl1-games` runs a simulated culture in a Pong closed loop (Kagan 2022 protocol): ball position is
-encoded as sensory stimulation, two motor regions decode a paddle action, and free-energy-principle
-feedback (predictable on a hit, unpredictable on a miss) drives online STDP.
+encoded as sensory stimulation, two motor regions decode a paddle action, free-energy-principle
+feedback marks hits/misses, and **reward-modulated STDP** (a three-factor rule, Izhikevich 2007)
+consolidates the synapses whose activity led to a hit.
 
 ```bash
-task pong -- --neurons 400 --steps 3000        # or: cargo run --release -p bl1-games --bin bl1-pong
+task pong -- --neurons 400 --steps 4000        # or: cargo run --release -p bl1-games --bin bl1-pong
 ```
 
 It prints hits/misses, mean rally length, and a hit-rate learning curve, and can export a per-event
-CSV (`--csv path`). **Status:** the loop is fully wired, reproducible, and tested; the culture already
-tracks the ball above the static-paddle baseline. A clear *learning* trend (rising rally length) is
-still being tuned — see the roadmap. Doom is next.
+CSV (`--csv path`). **Status:** the loop is fully wired, reproducible per seed, and tested; the culture
+tracks the ball above the static-paddle baseline (~40% vs ~16%) and on some seeds shows a clear
+learning trend (e.g. 32% → 83% hit rate across a run). The trend is not yet consistent across seeds —
+stabilising it (reward-prediction-error baseline, tuning) is ongoing. Doom is next.
 
 ## License
 
