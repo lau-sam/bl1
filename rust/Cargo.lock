@@ -92,6 +92,8 @@ dependencies = [
  "clap",
  "rand",
  "rand_pcg",
+ "serde",
+ "serde_yaml",
 ]
 
 [[package]]
@@ -119,6 +121,7 @@ dependencies = [
  "anyhow",
  "bl1-analysis",
  "bl1-core",
+ "bl1-games",
  "bl1-mea",
  "bl1-sim",
  "clap",

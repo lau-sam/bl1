@@ -296,6 +296,43 @@ impl App {
         self.status = format!("Trainer reset (seed {}).", self.train_seed);
     }
 
+    /// Path of the shareable brain file (copy it to hand off a trained culture).
+    fn brain_path() -> &'static Path {
+        Path::new("brains/pong_brain.yaml")
+    }
+
+    /// Save the current trained brain to a shareable YAML file.
+    pub fn save_brain(&mut self) {
+        let Some(t) = self.trainer.as_ref() else {
+            self.status = "Nothing to save — start training first (Space).".to_string();
+            return;
+        };
+        let path = Self::brain_path();
+        self.status = match t.save(path) {
+            Ok(()) => format!(
+                "Brain saved to {} — share this file to hand off your culture.",
+                path.display()
+            ),
+            Err(e) => format!("Save failed: {e}"),
+        };
+    }
+
+    /// Load a shared brain file and continue training from it.
+    pub fn load_brain(&mut self) {
+        let path = Self::brain_path();
+        match bl1_games::PursuitAgent::load(path) {
+            Ok(agent) => {
+                self.trainer = Some(agent);
+                self.training = false;
+                self.status = format!(
+                    "Loaded brain from {} — press Space to continue.",
+                    path.display()
+                );
+            }
+            Err(e) => self.status = format!("Load failed ({}): {e}", path.display()),
+        }
+    }
+
     pub fn train_faster(&mut self) {
         self.train_speed = (self.train_speed * 2).min(1000);
     }

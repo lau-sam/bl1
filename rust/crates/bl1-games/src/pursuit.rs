@@ -26,12 +26,36 @@
 //! The agent exposes a single-step API ([`PursuitAgent::step`]) plus observable
 //! state so a live UI can advance training frame by frame and watch it learn.
 
+use std::fs;
+use std::path::Path;
+
+use anyhow::Result;
 use bl1_core::{IzhParams, NeuronState, build_population, izhikevich_step};
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
+use serde::{Deserialize, Serialize};
 
 use crate::closed_loop::RunLog;
 use crate::pong::{Action, Event, Pong, PongState};
+
+/// A portable, shareable snapshot of a trained brain: the learned readout plus
+/// the culture's identity (seed + shape) so it reconstructs exactly. It's a
+/// tiny YAML file — copy it to hand your trained culture to someone else, who
+/// can load it and keep training from where you left off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Brain {
+    pub version: u32,
+    pub mode: String,
+    pub n_input: usize,
+    pub per_band: usize,
+    pub seed: u64,
+    pub w: Vec<f32>,
+    pub b: f32,
+    pub baseline: Vec<f32>,
+    pub step_idx: usize,
+    pub hits: u32,
+    pub misses: u32,
+}
 
 /// Parameters for the pursuit (REINFORCE) agent.
 #[derive(Debug, Clone)]
@@ -83,6 +107,7 @@ pub struct PursuitAgent {
     b: f32,
     /// Per-position reward baseline (one bin per band).
     baseline: Vec<f32>,
+    seed: u64,
     pong: Pong,
     rng: Pcg64,
 
@@ -121,6 +146,7 @@ impl PursuitAgent {
             w: vec![0.0; p.n_input],
             b: 0.5, // start with a centred paddle target
             baseline: vec![0.0; p.n_input],
+            seed,
             features: vec![0.0; p.n_input],
             disp: vec![0.0; p.n_input],
             s_current: vec![0.0; p.n_input * p.per_band],
@@ -291,6 +317,60 @@ impl PursuitAgent {
         }
     }
 
+    // --- portable brain (save / load / share) ---
+
+    /// Snapshot the trained brain for saving or sharing.
+    pub fn brain(&self) -> Brain {
+        Brain {
+            version: 1,
+            mode: "pursuit-feedforward".to_string(),
+            n_input: self.p.n_input,
+            per_band: self.p.per_band,
+            seed: self.seed,
+            w: self.w.clone(),
+            b: self.b,
+            baseline: self.baseline.clone(),
+            step_idx: self.step_idx,
+            hits: self.hits,
+            misses: self.misses,
+        }
+    }
+
+    /// Reconstruct an agent from a saved brain (same culture + learned readout),
+    /// ready to continue training.
+    pub fn from_brain(brain: &Brain) -> Self {
+        let params = PursuitParams {
+            n_input: brain.n_input,
+            per_band: brain.per_band,
+            ..PursuitParams::default()
+        };
+        let mut a = PursuitAgent::new(params, brain.seed);
+        a.w = brain.w.clone();
+        a.b = brain.b;
+        a.baseline = brain.baseline.clone();
+        a.step_idx = brain.step_idx;
+        a.hits = brain.hits;
+        a.misses = brain.misses;
+        a
+    }
+
+    /// Write the brain to a YAML file (creating parent dirs).
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(dir) = path.parent()
+            && !dir.as_os_str().is_empty()
+        {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(path, serde_yaml::to_string(&self.brain())?)?;
+        Ok(())
+    }
+
+    /// Load a shared brain file and rebuild the agent.
+    pub fn load(path: &Path) -> Result<Self> {
+        let brain: Brain = serde_yaml::from_str(&fs::read_to_string(path)?)?;
+        Ok(Self::from_brain(&brain))
+    }
+
     /// The most recent `n` outcomes in time order (oldest→newest); `true` = hit.
     pub fn recent_outcomes(&self, n: usize) -> Vec<bool> {
         let start = self.events.len().saturating_sub(n);
@@ -365,5 +445,18 @@ mod tests {
         a.step();
         assert_eq!(a.step_idx(), 1);
         assert_eq!(a.features().len(), 16);
+    }
+
+    #[test]
+    fn brain_roundtrip_preserves_learned_state() {
+        let mut a = PursuitAgent::new(PursuitParams::default(), 5);
+        a.run(500);
+        let saved = a.brain();
+        let b = PursuitAgent::from_brain(&saved);
+        assert_eq!(b.hits(), a.hits());
+        assert_eq!(b.misses(), a.misses());
+        assert_eq!(b.step_idx(), a.step_idx());
+        assert_eq!(b.brain().w, a.brain().w);
+        assert_eq!(b.brain().seed, a.brain().seed);
     }
 }

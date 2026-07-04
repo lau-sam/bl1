@@ -22,3 +22,5 @@ rand = { workspace = true }
 rand_pcg = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }

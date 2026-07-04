@@ -98,6 +98,14 @@ fn handle_key(app: &mut App, code: KeyCode) {
                 app.train_slower();
                 return;
             }
+            KeyCode::Char('w') => {
+                app.save_brain();
+                return;
+            }
+            KeyCode::Char('o') => {
+                app.load_brain();
+                return;
+            }
             _ => {}
         }
     }

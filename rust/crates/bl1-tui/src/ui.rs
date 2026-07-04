@@ -1110,6 +1110,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("Space", "play/pause"),
             ("r", "reset"),
             ("+/-", "speed"),
+            ("w/o", "save/load brain"),
             ("Tab", "view"),
             ("?", "help"),
             ("q", "quit"),
@@ -1202,6 +1203,10 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("Space", "start / pause live training"));
             lines.push(help_row("r", "reset to a fresh culture (new seed)"));
             lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
+            lines.push(help_row(
+                "w / o",
+                "save / load the trained brain (brains/pong_brain.yaml — share it!)",
+            ));
             lines.push(Line::from(""));
             lines.push(help_head("Reading the panels"));
             lines.push(help_row(
