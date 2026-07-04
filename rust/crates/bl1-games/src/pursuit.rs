@@ -97,6 +97,8 @@ pub struct PursuitAgent {
 
     // --- observable snapshots for a live UI ---
     features: Vec<f32>,
+    /// EMA-smoothed features for display (raw per-frame rates flicker badly).
+    disp: Vec<f32>,
     last_target: f32,
     last_sigma: f32,
     last_reward: f32,
@@ -120,6 +122,7 @@ impl PursuitAgent {
             b: 0.5, // start with a centred paddle target
             baseline: vec![0.0; p.n_input],
             features: vec![0.0; p.n_input],
+            disp: vec![0.0; p.n_input],
             s_current: vec![0.0; p.n_input * p.per_band],
             s,
             s_params,
@@ -178,6 +181,10 @@ impl PursuitAgent {
             for v in self.features.iter_mut() {
                 *v /= sum;
             }
+        }
+        // Smooth the display features so the bump doesn't flicker frame-to-frame.
+        for i in 0..ni {
+            self.disp[i] = 0.85 * self.disp[i] + 0.15 * self.features[i];
         }
         let ns = (ni * pb) as f32;
         self.pop_rate
@@ -252,8 +259,11 @@ impl PursuitAgent {
     pub fn game(&self) -> &PongState {
         &self.game
     }
+    /// Smoothed sensory features, for display (flicker-free) — deliberately the
+    /// EMA `disp`, not the raw per-frame `features` used for learning.
+    #[allow(clippy::misnamed_getters)]
     pub fn features(&self) -> &[f32] {
-        &self.features
+        &self.disp
     }
     pub fn step_idx(&self) -> usize {
         self.step_idx

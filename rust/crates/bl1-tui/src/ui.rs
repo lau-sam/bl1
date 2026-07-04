@@ -10,7 +10,8 @@ use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Points};
 use ratatui::widgets::{
-    Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Sparkline, Wrap,
+    Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
+    Paragraph, Sparkline, Wrap,
 };
 
 use crate::app::{App, Focus, RunResult, Tab};
@@ -738,31 +739,60 @@ fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, are
         );
         return;
     }
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let pts: Vec<(f64, f64)> = curve
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i as f64, v as f64 * 100.0))
+        .collect();
+    let x_max = (pts.len() - 1).max(1) as f64;
+    let total_events = hits + misses;
 
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
-        .split(inner);
-    let now = (curve.last().copied().unwrap_or(0.0) * 100.0) as u32;
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            format!(
-                "hit % per 20 events (0–100) · now {now}% · {} events — rising bars = learning",
-                hits + misses
-            ),
-            Style::default().fg(Color::DarkGray),
-        ))),
-        rows[0],
+    // Faint horizontal gridlines every 20% so heights are easy to read off.
+    let grid: Vec<Vec<(f64, f64)>> = [20.0, 40.0, 60.0, 80.0]
+        .iter()
+        .map(|&gy| vec![(0.0, gy), (x_max, gy)])
+        .collect();
+    let mut datasets: Vec<Dataset> = grid
+        .iter()
+        .map(|g| {
+            Dataset::default()
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::DarkGray))
+                .data(g)
+        })
+        .collect();
+    datasets.push(
+        Dataset::default()
+            .name("hit %")
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Green))
+            .data(&pts),
     );
-    // Filled sparkline (ratatui demo style): bars fixed to the 0–100% scale.
-    let data: Vec<u64> = curve.iter().map(|&v| (v * 100.0) as u64).collect();
-    let spark = Sparkline::default()
-        .data(&data)
-        .max(100)
-        .style(Style::default().fg(Color::Green));
-    frame.render_widget(spark, rows[1]);
+
+    let x_labels = vec![
+        "0".to_string(),
+        format!("{}", total_events / 2),
+        format!("{total_events} events"),
+    ];
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(
+            Axis::default()
+                .title("events played →")
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([0.0, x_max])
+                .labels(x_labels),
+        )
+        .y_axis(
+            Axis::default()
+                .title("hit %")
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([0.0, 100.0])
+                .labels(vec!["0", "20", "40", "60", "80", "100"]),
+        );
+    frame.render_widget(chart, area);
 }
 
 fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
@@ -836,7 +866,7 @@ fn draw_sensory(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect
         .split(inner);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "16 Y-bands · the lit bar = ball height the culture senses",
+            "◄ ball low    the peak = ball height the culture senses    ball high ►",
             Style::default().fg(Color::DarkGray),
         ))),
         rows[0],
