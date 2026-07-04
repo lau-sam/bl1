@@ -930,6 +930,7 @@ fn draw_train_stats(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, app: &
             format!("{} / {}", trainer.hits(), trainer.misses()),
         ),
         stat("speed", format!("{} steps/frame", app.train_speed)),
+        stat("control", trainer.control().label().to_string()),
         stat("seed", format!("{}", app.train_seed)),
         stat("ball y", format!("{:.2}", g.ball_y)),
         stat(
@@ -1110,6 +1111,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("Space", "play/pause"),
             ("r", "reset"),
             ("+/-", "speed"),
+            ("m", "control mode"),
             ("w/o", "save/load brain"),
             ("Tab", "view"),
             ("?", "help"),
@@ -1203,6 +1205,10 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("Space", "start / pause live training"));
             lines.push(help_row("r", "reset to a fresh culture (new seed)"));
             lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
+            lines.push(help_row(
+                "m",
+                "paddle control: direct (teleport) ↔ smooth-pursuit (inertial — must lead the ball)",
+            ));
             lines.push(help_row(
                 "w / o",
                 "save / load the trained brain (brains/pong_brain.yaml — share it!)",

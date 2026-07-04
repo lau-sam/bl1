@@ -20,4 +20,4 @@ pub use agent::{AgentParams, RstdpAgent};
 pub use closed_loop::{ClosedLoop, LoopConfig, RunLog};
 pub use plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};
 pub use pong::{Action, Event, Pong, PongState};
-pub use pursuit::{Brain, PursuitAgent, PursuitParams};
+pub use pursuit::{Brain, PaddleControl, PursuitAgent, PursuitParams};

@@ -147,6 +147,10 @@ pub struct App {
     pub training: bool,
     pub train_speed: usize,
     pub train_seed: u64,
+    /// How the paddle follows the culture's decoded target (direct teleport vs.
+    /// inertial smooth pursuit). Baked into the agent at build time, so changing
+    /// it rebuilds a fresh trainer.
+    pub train_control: bl1_games::PaddleControl,
 }
 
 impl App {
@@ -200,7 +204,19 @@ impl App {
             training: false,
             train_speed: 20,
             train_seed: 1,
+            train_control: bl1_games::PaddleControl::Direct,
         }
+    }
+
+    /// Build a trainer on the current seed with the current paddle-control mode.
+    fn build_trainer(&self) -> bl1_games::PursuitAgent {
+        bl1_games::PursuitAgent::new(
+            bl1_games::PursuitParams {
+                control: self.train_control,
+                ..bl1_games::PursuitParams::default()
+            },
+            self.train_seed,
+        )
     }
 
     // --- selection ---------------------------------------------------------
@@ -267,10 +283,7 @@ impl App {
 
     fn ensure_trainer(&mut self) {
         if self.trainer.is_none() {
-            self.trainer = Some(bl1_games::PursuitAgent::new(
-                bl1_games::PursuitParams::default(),
-                self.train_seed,
-            ));
+            self.trainer = Some(self.build_trainer());
         }
     }
 
@@ -288,12 +301,28 @@ impl App {
     /// Fresh, untrained culture on a new seed.
     pub fn reset_trainer(&mut self) {
         self.train_seed = self.train_seed.wrapping_add(1);
-        self.trainer = Some(bl1_games::PursuitAgent::new(
-            bl1_games::PursuitParams::default(),
-            self.train_seed,
-        ));
+        self.trainer = Some(self.build_trainer());
         self.training = false;
         self.status = format!("Trainer reset (seed {}).", self.train_seed);
+    }
+
+    /// Switch between direct and smooth-pursuit paddle control. The mode is
+    /// baked into the agent, so this rebuilds a fresh trainer on the same seed.
+    pub fn toggle_control(&mut self) {
+        self.train_control = match self.train_control {
+            bl1_games::PaddleControl::Direct => bl1_games::PaddleControl::SmoothPursuit,
+            bl1_games::PaddleControl::SmoothPursuit => bl1_games::PaddleControl::Direct,
+        };
+        self.trainer = Some(self.build_trainer());
+        self.training = false;
+        self.status = match self.train_control {
+            bl1_games::PaddleControl::Direct => {
+                "Paddle control: direct — the culture's output is the paddle. Retraining from scratch.".to_string()
+            }
+            bl1_games::PaddleControl::SmoothPursuit => {
+                "Paddle control: smooth-pursuit — inertial paddle, the culture must lead the ball. Retraining from scratch.".to_string()
+            }
+        };
     }
 
     /// Path of the shareable brain file (copy it to hand off a trained culture).
@@ -322,6 +351,7 @@ impl App {
         let path = Self::brain_path();
         match bl1_games::PursuitAgent::load(path) {
             Ok(agent) => {
+                self.train_control = agent.control();
                 self.trainer = Some(agent);
                 self.training = false;
                 self.status = format!(

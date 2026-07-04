@@ -20,8 +20,11 @@
 //! across seeds. Two ingredients were essential: (1) population averaging per
 //! band, and (2) **sum-1 normalisation** of the feature vector, so the learning
 //! signal `Δw ∝ x` stays well-scaled regardless of how sparsely the culture
-//! fires. The paddle is placed at the decoded target (direct control); adding
-//! realistic smooth-pursuit paddle dynamics is a further step.
+//! fires. The paddle follows the decoded target through a selectable actuator
+//! ([`PaddleControl`]): `Direct` snaps to it (~50% hit rate), while
+//! `SmoothPursuit` chases it with inertia (spring + damping + speed cap), so
+//! the paddle lags and the culture must *lead* the ball — a harder task that
+//! settles around 25–33%.
 //!
 //! The agent exposes a single-step API ([`PursuitAgent::step`]) plus observable
 //! state so a live UI can advance training frame by frame and watch it learn.
@@ -57,6 +60,44 @@ pub struct Brain {
     pub misses: u32,
 }
 
+/// How the decoded target drives the paddle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaddleControl {
+    /// The paddle teleports to the decoded target every frame — the culture's
+    /// output *is* the paddle position. Easy: no actuator to fight.
+    Direct,
+    /// The paddle chases the target with inertia (spring pull + damping + a
+    /// speed cap): realistic smooth pursuit. The paddle lags and overshoots, so
+    /// the culture must *lead* a fast ball instead of snapping onto it.
+    SmoothPursuit,
+}
+
+impl PaddleControl {
+    /// Short human label for a live UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            PaddleControl::Direct => "direct",
+            PaddleControl::SmoothPursuit => "smooth-pursuit",
+        }
+    }
+
+    /// Brain-file `mode` tag (persisted so a loaded brain restores its control).
+    fn mode_tag(self) -> &'static str {
+        match self {
+            PaddleControl::Direct => "pursuit-feedforward",
+            PaddleControl::SmoothPursuit => "pursuit-smooth",
+        }
+    }
+
+    fn from_mode_tag(tag: &str) -> Self {
+        if tag.contains("smooth") {
+            PaddleControl::SmoothPursuit
+        } else {
+            PaddleControl::Direct
+        }
+    }
+}
+
 /// Parameters for the pursuit (REINFORCE) agent.
 #[derive(Debug, Clone)]
 pub struct PursuitParams {
@@ -76,6 +117,14 @@ pub struct PursuitParams {
     pub explore_min: f32,
     pub explore_decay_steps: usize,
     pub ball_speed: f32,
+    /// How the paddle follows the decoded target.
+    pub control: PaddleControl,
+    /// Spring pull toward the target per frame (smooth-pursuit only).
+    pub paddle_accel: f32,
+    /// Velocity retention per frame — `< 1` bleeds off momentum (friction).
+    pub paddle_damping: f32,
+    /// Hard cap on paddle speed per frame (smooth-pursuit only).
+    pub paddle_max_speed: f32,
 }
 
 impl Default for PursuitParams {
@@ -93,6 +142,10 @@ impl Default for PursuitParams {
             explore_min: 0.05,
             explore_decay_steps: 3000,
             ball_speed: 0.03,
+            control: PaddleControl::Direct,
+            paddle_accel: 0.5,
+            paddle_damping: 0.6,
+            paddle_max_speed: 0.08,
         }
     }
 }
@@ -113,6 +166,8 @@ pub struct PursuitAgent {
 
     // --- persistent play/learning state (advanced one step at a time) ---
     game: PongState,
+    /// Paddle velocity for the smooth-pursuit actuator (unused in direct mode).
+    paddle_vy: f32,
     step_idx: usize,
     hits: u32,
     misses: u32,
@@ -155,6 +210,7 @@ impl PursuitAgent {
             pong,
             rng,
             game,
+            paddle_vy: 0.0,
             step_idx: 0,
             hits: 0,
             misses: 0,
@@ -229,8 +285,25 @@ impl PursuitAgent {
         let target = (mu + sigma * gaussian(&mut self.rng)).clamp(0.0, 1.0);
         let perturb = target - mu;
 
-        // Dense tracking reward and per-position baseline.
-        let reward = 1.0 - 2.0 * (target - self.game.ball_y).abs();
+        // Actuator: turn the decoded target into an actual paddle position.
+        // Direct control snaps to it; smooth-pursuit chases it with inertia
+        // (spring pull, damping, speed cap), so the paddle lags and overshoots.
+        let paddle = match p.control {
+            PaddleControl::Direct => target,
+            PaddleControl::SmoothPursuit => {
+                let err = target - self.game.paddle_y;
+                self.paddle_vy = (self.paddle_vy + p.paddle_accel * err) * p.paddle_damping;
+                self.paddle_vy = self
+                    .paddle_vy
+                    .clamp(-p.paddle_max_speed, p.paddle_max_speed);
+                (self.game.paddle_y + self.paddle_vy).clamp(0.0, 1.0)
+            }
+        };
+
+        // Dense tracking reward on the *actual* paddle position (what scores),
+        // with a per-position baseline. Under smooth pursuit this credits the
+        // target perturbation with where the inertial paddle actually ended up.
+        let reward = 1.0 - 2.0 * (paddle - self.game.ball_y).abs();
         let bin = (self.game.ball_y.clamp(0.0, 1.0) * (ni as f32 - 1.0)).round() as usize;
         let rpe = reward - self.baseline[bin];
         self.baseline[bin] = (1.0 - p.reward_alpha) * self.baseline[bin] + p.reward_alpha * reward;
@@ -242,9 +315,9 @@ impl PursuitAgent {
         }
         self.b += g;
 
-        // Place the paddle at the decoded target (direct control), then step.
+        // Drive the paddle and step the game.
         let mut g_state = self.game;
-        g_state.paddle_y = target;
+        g_state.paddle_y = paddle;
         let (next, event) = self.pong.step(&g_state, Action::Stay, &mut self.rng);
         match event {
             Event::Hit => {
@@ -303,6 +376,10 @@ impl PursuitAgent {
     pub fn last_target(&self) -> f32 {
         self.last_target
     }
+    /// How the paddle is being driven (direct vs. smooth-pursuit).
+    pub fn control(&self) -> PaddleControl {
+        self.p.control
+    }
     pub fn sigma(&self) -> f32 {
         self.last_sigma
     }
@@ -323,7 +400,7 @@ impl PursuitAgent {
     pub fn brain(&self) -> Brain {
         Brain {
             version: 1,
-            mode: "pursuit-feedforward".to_string(),
+            mode: self.p.control.mode_tag().to_string(),
             n_input: self.p.n_input,
             per_band: self.p.per_band,
             seed: self.seed,
@@ -342,6 +419,7 @@ impl PursuitAgent {
         let params = PursuitParams {
             n_input: brain.n_input,
             per_band: brain.per_band,
+            control: PaddleControl::from_mode_tag(&brain.mode),
             ..PursuitParams::default()
         };
         let mut a = PursuitAgent::new(params, brain.seed);
@@ -437,6 +515,41 @@ mod tests {
             "expected positive learning trend, got {:+.1} pts",
             log.improvement() * 100.0
         );
+    }
+
+    #[test]
+    fn smooth_pursuit_learns_with_inertia() {
+        // Inertial paddle is strictly harder than direct control (which lands
+        // ~50%): the actuator lags, so tracking settles around 25–33%. Still
+        // clearly beats the ~16% static-paddle baseline and trends upward.
+        let params = PursuitParams {
+            control: PaddleControl::SmoothPursuit,
+            ..PursuitParams::default()
+        };
+        let mut a = PursuitAgent::new(params, 1);
+        let log = a.run(6000);
+        assert!(
+            log.hit_rate() > 0.25,
+            "expected smooth-pursuit tracking > 25%, got {:.1}%",
+            log.hit_rate() * 100.0
+        );
+        assert!(
+            log.improvement() > 0.0,
+            "expected positive learning trend, got {:+.1} pts",
+            log.improvement() * 100.0
+        );
+    }
+
+    #[test]
+    fn smooth_brain_roundtrips_control_mode() {
+        let params = PursuitParams {
+            control: PaddleControl::SmoothPursuit,
+            ..PursuitParams::default()
+        };
+        let mut a = PursuitAgent::new(params, 5);
+        a.run(200);
+        let restored = PursuitAgent::from_brain(&a.brain());
+        assert_eq!(restored.control(), PaddleControl::SmoothPursuit);
     }
 
     #[test]

@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use bl1_games::{
-    AgentParams, ClosedLoop, Event, LoopConfig, PursuitAgent, PursuitParams, RstdpAgent, RunLog,
+    AgentParams, ClosedLoop, Event, LoopConfig, PaddleControl, PursuitAgent, PursuitParams,
+    RstdpAgent, RunLog,
 };
 use bl1_sim::Config;
 use clap::Parser;
@@ -48,6 +49,11 @@ struct Cli {
     #[arg(long)]
     pursuit: bool,
 
+    /// With --pursuit: drive the paddle through an inertial smooth-pursuit
+    /// actuator (it lags and overshoots) instead of snapping to the target.
+    #[arg(long)]
+    smooth: bool,
+
     /// Write a per-event CSV to this path.
     #[arg(long, value_name = "PATH")]
     csv: Option<PathBuf>,
@@ -57,11 +63,22 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let log: RunLog = if cli.pursuit {
+        let control = if cli.smooth {
+            PaddleControl::SmoothPursuit
+        } else {
+            PaddleControl::Direct
+        };
         println!(
-            "Running pursuit (node-perturbation) Pong agent: {} game steps, seed {} ...",
-            cli.steps, cli.seed
+            "Running pursuit (node-perturbation) Pong agent [{}]: {} game steps, seed {} ...",
+            control.label(),
+            cli.steps,
+            cli.seed
         );
-        let mut agent = PursuitAgent::new(PursuitParams::default(), cli.seed);
+        let params = PursuitParams {
+            control,
+            ..PursuitParams::default()
+        };
+        let mut agent = PursuitAgent::new(params, cli.seed);
         agent.run(cli.steps)
     } else if cli.rstdp {
         println!(

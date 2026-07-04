@@ -106,6 +106,10 @@ fn handle_key(app: &mut App, code: KeyCode) {
                 app.load_brain();
                 return;
             }
+            KeyCode::Char('m') => {
+                app.toggle_control();
+                return;
+            }
             _ => {}
         }
     }
