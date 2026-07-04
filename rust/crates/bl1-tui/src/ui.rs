@@ -910,10 +910,24 @@ fn draw_sensory(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect
         ))),
         rows[0],
     );
-    let feats: Vec<u64> = trainer
-        .features()
-        .iter()
-        .map(|&v| (v * 1000.0) as u64)
+    // The place code has one value per band (16), far fewer than the panel is
+    // wide. Resample it (linear interpolation) to one bar per column so the bump
+    // spreads across the whole width instead of hugging the left edge.
+    let bands = trainer.features();
+    let width = rows[1].width.max(1) as usize;
+    let feats: Vec<u64> = (0..width)
+        .map(|x| {
+            let pos = if width > 1 {
+                x as f32 / (width - 1) as f32 * (bands.len() - 1) as f32
+            } else {
+                0.0
+            };
+            let lo = pos.floor() as usize;
+            let hi = (lo + 1).min(bands.len() - 1);
+            let frac = pos - lo as f32;
+            let v = bands[lo] * (1.0 - frac) + bands[hi] * frac;
+            (v * 1000.0) as u64
+        })
         .collect();
     let spark = Sparkline::default()
         .data(&feats)
