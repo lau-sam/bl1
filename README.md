@@ -1,10 +1,42 @@
-# BL-1: In-Silico Cortical Culture Simulator
+# BL-1 — a cortical culture simulator that learns to play Pong, live in your terminal
 
 ![Python 3.10+](https://img.shields.io/badge/python-%3E%3D3.10-blue)
+![Rust](https://img.shields.io/badge/rust-workspace-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![JAX](https://img.shields.io/badge/accelerator-JAX-orange)
 
-BL-1 is a JAX-based framework for simulating dissociated cortical cultures growing on multi-electrode arrays (MEAs). It combines biologically detailed spiking neuron models with conductance-based synapses, four timescales of synaptic plasticity, virtual MEA recording and stimulation, and closed-loop game experiments -- all within a fully differentiable, JIT-compiled simulation loop built on `jax.lax.scan`. BL-1 enables researchers to run in-silico replications of biological intelligence experiments at scale, with GPU acceleration and support for gradient-based optimization through surrogate gradients. The closed-loop game module replicates the DishBrain experiment (Kagan et al. 2022), which grew biological cortical neurons on HD-MEAs and demonstrated that living neural cultures could learn to play Pong via free-energy-principle feedback.
+> **Watch a simulated recurrent cortical culture learn to play Pong in real time**, right in your
+> terminal — on a feed-forward neuron bank *or* on the full recurrent `bl1-sim` culture used as a
+> fixed reservoir. Then save the trained "brain" as a tiny file and share it.
+
+![BL-1 Train view — the culture learning Pong live, recent hit rate climbing from 0% to 82%](docs/images/tui_train_learning.gif)
+
+*Live training at 1000 steps/frame — the recent hit rate climbs from 0% to ~82% in real time.*
+
+```bash
+devbox shell && task install && task tui:release   # → Train tab → press Space, watch it learn
+```
+
+These are **simulated** neurons, not living tissue — but the learning is real: the paddle is driven
+by a linear readout trained on spikes from a biophysical Izhikevich model (conductance-based
+AMPA/NMDA/GABA synapses, short-term plasticity), learning purely from a reward signal by node
+perturbation. It reaches **~50% hit rate vs ~16% for a static paddle**, and on the reservoir the
+recurrent weights are never touched — the *simulated culture itself* is the fixed nonlinear substrate.
+
+![BL-1 Train view — a trained culture returning 100% of recent balls](docs/images/tui_train_mastery.gif)
+
+*Once trained (~540k steps, overall hit rate ~90%), the culture returns essentially every ball —
+recent hits sit at 100%, and the overall rate keeps creeping toward 100% the longer it plays.*
+
+---
+
+## About
+
+BL-1 is a JAX + Rust framework for simulating dissociated cortical cultures growing on multi-electrode arrays (MEAs). It combines biologically detailed spiking neuron models with conductance-based synapses, four timescales of synaptic plasticity, virtual MEA recording and stimulation, and closed-loop game experiments -- all within a fully differentiable, JIT-compiled simulation loop built on `jax.lax.scan`. BL-1 enables researchers to run in-silico replications of biological intelligence experiments at scale, with GPU acceleration and support for gradient-based optimization through surrogate gradients. The closed-loop game module replicates the DishBrain experiment (Kagan et al. 2022), which grew biological cortical neurons on HD-MEAs and demonstrated that living neural cultures could learn to play Pong via free-energy-principle feedback.
+
+The heavy differentiable training pipeline lives in Python/JAX; the **forward simulator, closed-loop
+games, analysis, and the terminal cockpit are a native Rust workspace** (`rust/`) — fast,
+dependency-light, and the fastest way to *see* the culture in action ([jump to the Rust section](#rust-forward-simulator--terminal-ui)).
 
 ---
 
@@ -383,7 +415,7 @@ dependency-light simulation and a keyboard-driven control panel.
 | `bl1-analysis` | Burst detection (Wagenaar), branching ratio and avalanche exponents (Beggs & Plenz, MLE) |
 | `bl1-mea` | 64-channel and HD-MEA layouts, neuron→electrode mapping, spike detection, LFP |
 | `bl1-sim` | Neuron placement, distance-dependent connectivity, `Culture` factory, YAML config loader |
-| `bl1-games` | Closed-loop DishBrain experiments: Pong (`bl1-pong`) — sensory encoding, motor decoding, FEP feedback, online STDP |
+| `bl1-games` | Closed-loop DishBrain Pong (`bl1-pong`): sensory encoding, motor decoding, FEP feedback, and agents that **learn** — node-perturbation readout on a feed-forward bank or on the recurrent culture as a reservoir; shareable trained brains |
 | `bl1-tui` | The `bl1` binary: a terminal UI to run and inspect simulations |
 
 From the repo root, `task` wraps the common commands:
@@ -415,15 +447,25 @@ The UI is a mouse- and keyboard-driven cockpit with five views (**Dashboard**, *
   `Enter`/`r` or the **Run** button starts a preview. The simulation runs on a background
   thread — the UI stays responsive with a live spinner while it computes. The raster scrolls
   with the mouse wheel.
-- **Train:** watch the culture **learn Pong live** — press Space to start, `+`/`-` to change speed,
-  `r` to reset. A Canvas renders the game (ball + tracking paddle) in real time next to a live
-  hit-rate learning curve (Chart), skill gauges, and the culture's sensory bump (Sparkline). Built
-  from ratatui's Canvas / Chart / Gauge / Sparkline widgets.
+- **Train:** watch the culture **learn Pong live** — `Space` starts/pauses, `+`/`-` change speed,
+  `r` resets to a fresh culture. `b` switches the **substrate** (feed-forward bank ↔ the full
+  recurrent culture as a reservoir); `m` switches **paddle control** (direct teleport ↔ inertial
+  smooth pursuit, where the culture must *lead* the ball); `w`/`o` **save/load** the trained brain to
+  a shareable file (`brains/pong_brain.yaml`). A Canvas renders the game (ball + tracking paddle) in
+  real time next to a live hit-rate learning curve (Chart), a per-event hit/miss timeline, skill
+  gauges, and the culture's sensory bump (Sparkline). Built from ratatui's Canvas / Chart / Gauge /
+  Sparkline widgets.
 - **Science:** the biology metrics of the last run in plain language — firing rate, network bursts
   (vs Wagenaar 2006), branching ratio σ and avalanche exponent (criticality, Beggs & Plenz 2003) —
   each with a one-line explanation and a "matches living cortex?" verdict.
 - **Results:** browse every run from the session with the metrics that came out of it; press
   `e` to export the whole session to `results/session_runs.csv`.
+
+![BL-1 cockpit — Science tab: plain-language biology verdicts](docs/images/tui_science.png)
+
+*The Science tab turns the biology into plain language: firing rate, network bursts (vs Wagenaar
+2006), and branching ratio σ (criticality, vs Beggs & Plenz 2003), each with a "matches living
+cortex?" verdict.*
 
 Per-step ordering, cell-type mixes, and receptor kinetics mirror the JAX model; the YAML loader
 reads the same `configs/*.yaml` files.
@@ -443,7 +485,7 @@ It prints hits/misses, mean rally length, a learning-improvement score, and a hi
 export a per-event CSV (`--csv path`). A multi-seed parameter sweep lives in `bl1-pong-sweep`
 (`task pong-sweep`), scoring configs by their seed-averaged learning improvement.
 
-Three agents share the loop:
+Four agents share the loop:
 
 - **pursuit** (`--pursuit`): the spiking culture **learns to play**. A sensory population place-codes
   the ball; a linear readout drives the paddle through a Gaussian policy trained by reward-modulated
@@ -452,19 +494,28 @@ Three agents share the loop:
   learning trend across seeds. Two ingredients were essential: population averaging per band, and
   sum-1 normalisation of the feature vector (so `Δw ∝ x` stays well-scaled however sparsely the
   culture fires).
+- **reservoir** (`--reservoir`): the same learning rule, but the substrate is the **full recurrent
+  `bl1-sim` culture** (distance-wired, conductance-based synapses, STP) used as a fixed *reservoir* —
+  its recurrent weights are never touched, only the linear readout learns. It also reaches **~50%**,
+  so the genuine recurrent network plays Pong, not just a feed-forward bank.
 - **reflex** (default): motor read from the sensory-driven bands — tracks the ball (~40%) but has no
   plastic degrees of freedom to learn from.
 - **R-STDP** (`--rstdp`): the Wunderlich-style spike-correlation recipe (plastic S→M projection,
   per-neuron graded reward, homeostasis). Correct architecture, but does not yet converge here —
   spike-correlation credit assignment is far harder than the node-perturbation gradient.
 
+Both learning agents support `--smooth`, an inertial smooth-pursuit paddle (spring + damping + speed
+cap) instead of teleporting to the decoded target — a harder task where the culture must lead the
+ball (~33%).
+
 ```bash
-task pong -- --pursuit --steps 8000    # watch the hit rate climb
+task pong -- --pursuit   --steps 8000              # feed-forward bank learns; watch the hit rate climb
+task pong -- --reservoir --steps 6000 --neurons 400 # the recurrent culture learns as a reservoir
+task pong -- --pursuit   --smooth --steps 6000     # inertial paddle — the culture must anticipate
 ```
 
-The culture genuinely learns closed-loop game play; making the harder spike-correlation route
-(R-STDP) and realistic smooth-pursuit paddle dynamics work are open problems — **contributions
-welcome.**
+The culture genuinely learns closed-loop game play on both substrates. Making the harder
+spike-correlation route (R-STDP) converge is still an open problem — **contributions welcome.**
 
 ## License
 
