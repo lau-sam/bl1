@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use bl1_games::{
     AgentParams, ClosedLoop, Event, LoopConfig, PaddleControl, PursuitAgent, PursuitParams,
-    RstdpAgent, RunLog,
+    ReservoirAgent, ReservoirParams, RstdpAgent, RunLog,
 };
 use bl1_sim::Config;
 use clap::Parser;
@@ -49,6 +49,11 @@ struct Cli {
     #[arg(long)]
     pursuit: bool,
 
+    /// Use the reservoir agent: the full recurrent bl1-sim culture as a fixed
+    /// substrate with a trained linear readout (node perturbation).
+    #[arg(long)]
+    reservoir: bool,
+
     /// With --pursuit: drive the paddle through an inertial smooth-pursuit
     /// actuator (it lags and overshoots) instead of snapping to the target.
     #[arg(long)]
@@ -62,12 +67,28 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let log: RunLog = if cli.pursuit {
-        let control = if cli.smooth {
-            PaddleControl::SmoothPursuit
-        } else {
-            PaddleControl::Direct
+    let control = if cli.smooth {
+        PaddleControl::SmoothPursuit
+    } else {
+        PaddleControl::Direct
+    };
+
+    let log: RunLog = if cli.reservoir {
+        println!(
+            "Running reservoir (recurrent culture) Pong agent [{}]: {} neurons, {} game steps, seed {} ...",
+            control.label(),
+            cli.neurons,
+            cli.steps,
+            cli.seed
+        );
+        let params = ReservoirParams {
+            n_neurons: cli.neurons,
+            control,
+            ..ReservoirParams::default()
         };
+        let mut agent = ReservoirAgent::new(params, cli.seed);
+        agent.run(cli.steps)
+    } else if cli.pursuit {
         println!(
             "Running pursuit (node-perturbation) Pong agent [{}]: {} game steps, seed {} ...",
             control.label(),

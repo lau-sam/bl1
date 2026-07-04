@@ -110,6 +110,10 @@ fn handle_key(app: &mut App, code: KeyCode) {
                 app.toggle_control();
                 return;
             }
+            KeyCode::Char('b') => {
+                app.toggle_substrate();
+                return;
+            }
             _ => {}
         }
     }

@@ -15,6 +15,15 @@ use bl1_core::simulate;
 use bl1_sim::{Config, Culture};
 use ratatui::layout::{Position, Rect};
 
+/// Which neural substrate the Train view learns on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Substrate {
+    /// A feed-forward bank of Izhikevich neurons (fast, sharp place code).
+    Feedforward,
+    /// The full recurrent `bl1-sim` culture as a fixed reservoir (the real brain).
+    Reservoir,
+}
+
 /// Top-level views, switchable by clicking the tab bar, `Tab`, or `1`/`2`/`3`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -143,7 +152,7 @@ pub struct App {
     pub configs_from_dir: usize,
     pending: Option<PendingRun>,
     // --- live training (Train tab) ---
-    pub trainer: Option<bl1_games::PursuitAgent>,
+    pub trainer: Option<Box<dyn bl1_games::Trainer>>,
     pub training: bool,
     pub train_speed: usize,
     pub train_seed: u64,
@@ -151,6 +160,8 @@ pub struct App {
     /// inertial smooth pursuit). Baked into the agent at build time, so changing
     /// it rebuilds a fresh trainer.
     pub train_control: bl1_games::PaddleControl,
+    /// Which substrate the trainer learns on (feed-forward vs. recurrent culture).
+    pub train_substrate: Substrate,
 }
 
 impl App {
@@ -205,18 +216,28 @@ impl App {
             train_speed: 20,
             train_seed: 1,
             train_control: bl1_games::PaddleControl::Direct,
+            train_substrate: Substrate::Feedforward,
         }
     }
 
-    /// Build a trainer on the current seed with the current paddle-control mode.
-    fn build_trainer(&self) -> bl1_games::PursuitAgent {
-        bl1_games::PursuitAgent::new(
-            bl1_games::PursuitParams {
-                control: self.train_control,
-                ..bl1_games::PursuitParams::default()
-            },
-            self.train_seed,
-        )
+    /// Build a trainer on the current seed with the current substrate + control.
+    fn build_trainer(&self) -> Box<dyn bl1_games::Trainer> {
+        match self.train_substrate {
+            Substrate::Feedforward => Box::new(bl1_games::PursuitAgent::new(
+                bl1_games::PursuitParams {
+                    control: self.train_control,
+                    ..bl1_games::PursuitParams::default()
+                },
+                self.train_seed,
+            )),
+            Substrate::Reservoir => Box::new(bl1_games::ReservoirAgent::new(
+                bl1_games::ReservoirParams {
+                    control: self.train_control,
+                    ..bl1_games::ReservoirParams::default()
+                },
+                self.train_seed,
+            )),
+        }
     }
 
     // --- selection ---------------------------------------------------------
@@ -306,6 +327,25 @@ impl App {
         self.status = format!("Trainer reset (seed {}).", self.train_seed);
     }
 
+    /// Switch the learning substrate (feed-forward bank ↔ recurrent culture).
+    /// Rebuilds a fresh trainer on the same seed.
+    pub fn toggle_substrate(&mut self) {
+        self.train_substrate = match self.train_substrate {
+            Substrate::Feedforward => Substrate::Reservoir,
+            Substrate::Reservoir => Substrate::Feedforward,
+        };
+        self.trainer = Some(self.build_trainer());
+        self.training = false;
+        self.status = match self.train_substrate {
+            Substrate::Feedforward => {
+                "Substrate: feed-forward bank — fast, sharp place code. Retraining from scratch.".to_string()
+            }
+            Substrate::Reservoir => {
+                "Substrate: recurrent culture — the real bl1-sim brain as a fixed reservoir (heavier). Retraining from scratch.".to_string()
+            }
+        };
+    }
+
     /// Switch between direct and smooth-pursuit paddle control. The mode is
     /// baked into the agent, so this rebuilds a fresh trainer on the same seed.
     pub fn toggle_control(&mut self) {
@@ -346,12 +386,18 @@ impl App {
         };
     }
 
-    /// Load a shared brain file and continue training from it.
+    /// Load a shared brain file and continue training from it. The substrate and
+    /// paddle-control mode are restored from the file.
     pub fn load_brain(&mut self) {
         let path = Self::brain_path();
-        match bl1_games::PursuitAgent::load(path) {
+        match bl1_games::load_trainer(path) {
             Ok(agent) => {
                 self.train_control = agent.control();
+                self.train_substrate = if agent.substrate().contains("culture") {
+                    Substrate::Reservoir
+                } else {
+                    Substrate::Feedforward
+                };
                 self.trainer = Some(agent);
                 self.training = false;
                 self.status = format!(

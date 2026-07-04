@@ -58,6 +58,10 @@ pub struct Brain {
     pub step_idx: usize,
     pub hits: u32,
     pub misses: u32,
+    /// Reservoir mode only: size of the recurrent culture used as the substrate
+    /// (0 for feedforward pursuit brains). Defaulted so old files still load.
+    #[serde(default)]
+    pub culture_neurons: usize,
 }
 
 /// How the decoded target drives the paddle.
@@ -410,6 +414,7 @@ impl PursuitAgent {
             step_idx: self.step_idx,
             hits: self.hits,
             misses: self.misses,
+            culture_neurons: 0,
         }
     }
 

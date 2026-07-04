@@ -15,9 +15,13 @@ pub mod feedback;
 pub mod plasticity;
 pub mod pong;
 pub mod pursuit;
+pub mod reservoir;
+pub mod trainer;
 
 pub use agent::{AgentParams, RstdpAgent};
 pub use closed_loop::{ClosedLoop, LoopConfig, RunLog};
 pub use plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};
 pub use pong::{Action, Event, Pong, PongState};
 pub use pursuit::{Brain, PaddleControl, PursuitAgent, PursuitParams};
+pub use reservoir::{ReservoirAgent, ReservoirParams};
+pub use trainer::{Trainer, load_trainer};

@@ -602,7 +602,7 @@ fn truncate(s: &str, max: usize) -> String {
 // ---------------------------------------------------------------------------
 
 fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(trainer) = app.trainer.as_ref() else {
+    let Some(trainer) = app.trainer.as_deref() else {
         let p = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
@@ -656,7 +656,7 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
 
 /// A per-event hit/miss timeline: one coloured block per ball, oldest→newest,
 /// so the early red (misses) visibly turns green (hits) as the culture learns.
-fn draw_outcomes(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+fn draw_outcomes(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
     let block = panel(
         " Outcomes — every ball, oldest → newest (green hit · red miss) ",
         false,
@@ -689,7 +689,7 @@ fn draw_outcomes(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rec
 
 fn draw_pong_canvas(
     frame: &mut Frame,
-    trainer: &bl1_games::PursuitAgent,
+    trainer: &dyn bl1_games::Trainer,
     area: Rect,
     playing: bool,
 ) {
@@ -762,7 +762,7 @@ fn draw_pong_canvas(
     frame.render_widget(canvas, area);
 }
 
-fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+fn draw_learning_chart(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
     let curve = trainer.hit_rate_curve(20);
     let (hits, misses) = (trainer.hits(), trainer.misses());
     let title = format!(" Learning curve — {hits} hits / {misses} misses ");
@@ -834,7 +834,7 @@ fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, are
     frame.render_widget(chart, area);
 }
 
-fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+fn draw_train_gauges(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
     let block = panel(" Skill ", false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -894,7 +894,7 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area:
     );
 }
 
-fn draw_sensory(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+fn draw_sensory(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
     let block = panel(" Sensory input — ball-Y place code ", false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -935,7 +935,7 @@ fn draw_sensory(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect
     frame.render_widget(spark, rows[1]);
 }
 
-fn draw_train_stats(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, app: &App, area: Rect) {
+fn draw_train_stats(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, app: &App, area: Rect) {
     let g = trainer.game();
     let lines = vec![
         stat("step", format!("{}", trainer.step_idx())),
@@ -944,6 +944,7 @@ fn draw_train_stats(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, app: &
             format!("{} / {}", trainer.hits(), trainer.misses()),
         ),
         stat("speed", format!("{} steps/frame", app.train_speed)),
+        stat("substrate", trainer.substrate().to_string()),
         stat("control", trainer.control().label().to_string()),
         stat("seed", format!("{}", app.train_seed)),
         stat("ball y", format!("{:.2}", g.ball_y)),
@@ -1125,6 +1126,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("Space", "play/pause"),
             ("r", "reset"),
             ("+/-", "speed"),
+            ("b", "substrate"),
             ("m", "control mode"),
             ("w/o", "save/load brain"),
             ("Tab", "view"),
@@ -1219,6 +1221,10 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("Space", "start / pause live training"));
             lines.push(help_row("r", "reset to a fresh culture (new seed)"));
             lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
+            lines.push(help_row(
+                "b",
+                "substrate: feed-forward bank ↔ recurrent culture (the real bl1-sim brain, heavier)",
+            ));
             lines.push(help_row(
                 "m",
                 "paddle control: direct (teleport) ↔ smooth-pursuit (inertial — must lead the ball)",
