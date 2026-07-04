@@ -10,8 +10,7 @@ use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Points};
 use ratatui::widgets::{
-    Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
-    Paragraph, Sparkline, Wrap,
+    Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Sparkline, Wrap,
 };
 
 use crate::app::{App, Focus, RunResult, Tab};
@@ -669,25 +668,29 @@ fn draw_pong_canvas(
     }
 
     // Ball: filled square (~square on screen given ~2:1 cells → x narrower).
-    let (bw, bh) = (0.02, 0.035);
+    // Dense sampling so every covered cell fills solid (no gaps).
+    let (bw, bh) = (0.022, 0.04);
     let mut ball: Vec<(f64, f64)> = Vec::new();
-    for a in 0..=6 {
-        for b in 0..=6 {
-            ball.push((
-                (bx - bw + 2.0 * bw * a as f64 / 6.0).clamp(0.0, 1.0),
-                (by - bh + 2.0 * bh * b as f64 / 6.0).clamp(0.0, 1.0),
-            ));
+    let mut ax = bx - bw;
+    while ax <= bx + bw {
+        let mut ay = by - bh;
+        while ay <= by + bh {
+            ball.push((ax.clamp(0.0, 1.0), ay.clamp(0.0, 1.0)));
+            ay += 0.008;
         }
+        ax += 0.004;
     }
-    // Paddle: filled vertical bar hugging the right edge.
+    // Paddle: one solid vertical bar hugging the right edge. Fine steps so the
+    // covered cells form a single contiguous block (no split into two bars).
     let mut paddle: Vec<(f64, f64)> = Vec::new();
-    for a in 0..=5 {
-        for b in 0..=28 {
-            paddle.push((
-                0.955 + 0.045 * a as f64 / 5.0,
-                (py - 0.11 + 0.22 * b as f64 / 28.0).clamp(0.0, 1.0),
-            ));
+    let mut px = 0.95;
+    while px <= 1.0 {
+        let mut pyy = py - 0.11;
+        while pyy <= py + 0.11 {
+            paddle.push((px, pyy.clamp(0.0, 1.0)));
+            pyy += 0.008;
         }
+        px += 0.004;
     }
 
     let title = if playing {
@@ -735,43 +738,31 @@ fn draw_learning_chart(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, are
         );
         return;
     }
-    let pts: Vec<(f64, f64)> = curve
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| (i as f64, v as f64 * 100.0))
-        .collect();
-    let x_max = (pts.len() - 1) as f64;
-    let total_events = hits + misses;
-    let datasets = vec![
-        Dataset::default()
-            .name("hit %")
-            .marker(Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Green))
-            .data(&pts),
-    ];
-    let x_labels = vec![
-        "0".to_string(),
-        format!("{}", total_events / 2),
-        format!("{total_events} events"),
-    ];
-    let chart = Chart::new(datasets)
-        .block(block)
-        .x_axis(
-            Axis::default()
-                .title("events played →")
-                .style(Style::default().fg(Color::DarkGray))
-                .bounds([0.0, x_max])
-                .labels(x_labels),
-        )
-        .y_axis(
-            Axis::default()
-                .title("hit %")
-                .style(Style::default().fg(Color::DarkGray))
-                .bounds([0.0, 100.0])
-                .labels(vec!["0", "50", "100"]),
-        );
-    frame.render_widget(chart, area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    let now = (curve.last().copied().unwrap_or(0.0) * 100.0) as u32;
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(
+                "hit % per 20 events (0–100) · now {now}% · {} events — rising bars = learning",
+                hits + misses
+            ),
+            Style::default().fg(Color::DarkGray),
+        ))),
+        rows[0],
+    );
+    // Filled sparkline (ratatui demo style): bars fixed to the 0–100% scale.
+    let data: Vec<u64> = curve.iter().map(|&v| (v * 100.0) as u64).collect();
+    let spark = Sparkline::default()
+        .data(&data)
+        .max(100)
+        .style(Style::default().fg(Color::Green));
+    frame.render_widget(spark, rows[1]);
 }
 
 fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
