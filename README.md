@@ -404,8 +404,8 @@ cargo run -p bl1-tui       # launch the terminal UI (reads ../configs/*.yaml)
 cargo run -p bl1-tui -- --headless   # print one preview's statistics, no TTY
 ```
 
-The UI is a mouse- and keyboard-driven cockpit with four views (**Dashboard**, **Simulate**,
-**Train**, **Results**), inspired by lazygit and k9s:
+The UI is a mouse- and keyboard-driven cockpit with five views (**Dashboard**, **Simulate**,
+**Train**, **Science**, **Results**), inspired by lazygit and k9s:
 
 - **Navigate:** click a tab, or press `Tab` / `1` `2` `3` to switch views. `?` opens a
   context-sensitive help overlay for the current view; the most-used keys are always shown
@@ -419,6 +419,9 @@ The UI is a mouse- and keyboard-driven cockpit with four views (**Dashboard**, *
   `r` to reset. A Canvas renders the game (ball + tracking paddle) in real time next to a live
   hit-rate learning curve (Chart), skill gauges, and the culture's sensory bump (Sparkline). Built
   from ratatui's Canvas / Chart / Gauge / Sparkline widgets.
+- **Science:** the biology metrics of the last run in plain language — firing rate, network bursts
+  (vs Wagenaar 2006), branching ratio σ and avalanche exponent (criticality, Beggs & Plenz 2003) —
+  each with a one-line explanation and a "matches living cortex?" verdict.
 - **Results:** browse every run from the session with the metrics that came out of it; press
   `e` to export the whole session to `results/session_runs.csv`.
 

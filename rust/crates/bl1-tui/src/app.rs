@@ -21,17 +21,25 @@ pub enum Tab {
     Dashboard,
     Simulate,
     Train,
+    Science,
     Results,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Dashboard, Tab::Simulate, Tab::Train, Tab::Results];
+    pub const ALL: [Tab; 5] = [
+        Tab::Dashboard,
+        Tab::Simulate,
+        Tab::Train,
+        Tab::Science,
+        Tab::Results,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
             Tab::Dashboard => "Dashboard",
             Tab::Simulate => "Simulate",
             Tab::Train => "Train",
+            Tab::Science => "Science",
             Tab::Results => "Results",
         }
     }
@@ -321,7 +329,7 @@ impl App {
                     self.results_selected = (self.results_selected + 1).min(self.history.len() - 1);
                 }
             }
-            Tab::Dashboard | Tab::Train => {}
+            Tab::Dashboard | Tab::Train | Tab::Science => {}
         }
     }
 
@@ -333,7 +341,7 @@ impl App {
             }
             Tab::Simulate => self.select_prev(),
             Tab::Results => self.results_selected = self.results_selected.saturating_sub(1),
-            Tab::Dashboard | Tab::Train => {}
+            Tab::Dashboard | Tab::Train | Tab::Science => {}
         }
     }
 
@@ -364,7 +372,7 @@ impl App {
                     }
                 }
             }
-            Tab::Dashboard | Tab::Train => {}
+            Tab::Dashboard | Tab::Train | Tab::Science => {}
         }
     }
 

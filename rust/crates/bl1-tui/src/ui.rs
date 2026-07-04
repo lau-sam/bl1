@@ -37,6 +37,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Tab::Dashboard => draw_dashboard(frame, app, root[1]),
         Tab::Simulate => draw_simulate(frame, app, root[1]),
         Tab::Train => draw_train(frame, app, root[1]),
+        Tab::Science => draw_science(frame, app, root[1]),
         Tab::Results => draw_results(frame, app, root[1]),
     }
 
@@ -879,6 +880,154 @@ fn draw_train_stats(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, app: &
     frame.render_widget(Paragraph::new(lines).block(panel(" State ", false)), area);
 }
 
+// ---------------------------------------------------------------------------
+// Science view — the biology metrics, in plain language
+// ---------------------------------------------------------------------------
+
+fn draw_science(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Science — what the numbers mean ");
+    let Some(r) = &app.result else {
+        let p = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No simulation yet.",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                "  Run one from the Simulate tab (press 2) to populate the biology metrics.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .block(block);
+        frame.render_widget(p, area);
+        return;
+    };
+
+    let head = Style::default().fg(CYAN).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(
+                "  Culture: {} neurons ({} excitatory) · {:.0} ms window",
+                r.n_neurons, r.n_exc, r.duration_ms
+            ),
+            head,
+        )),
+        Line::from(""),
+    ];
+
+    // Firing rate.
+    let fr = r.mean_fr_hz;
+    let (fr_tag, fr_c) = if !(0.2..=20.0).contains(&fr) {
+        ("outside the usual range", Color::Yellow)
+    } else {
+        ("physiological ✓", Color::Green)
+    };
+    lines.extend(sci_metric(
+        "Mean firing rate",
+        format!("{fr:.2} Hz"),
+        fr_tag,
+        fr_c,
+        "How often a neuron fires. Dissociated cortical cultures rest around 1–10 Hz.",
+    ));
+
+    // Burst rate (Wagenaar).
+    let br = r.burst_rate_per_min;
+    lines.extend(sci_metric(
+        "Network burst rate",
+        format!("{br:.1} / min"),
+        "vs Wagenaar 2006 ≈ 8/min",
+        Color::Green,
+        "Whole-culture bursts — the signature rhythm of cultured cortex (Wagenaar 2006).",
+    ));
+
+    // Branching ratio σ — criticality.
+    let sigma = r.branching_ratio;
+    let (s_tag, s_c) = if sigma.is_nan() {
+        ("n/a", Color::Gray)
+    } else if (0.9..=1.1).contains(&sigma) {
+        ("near-critical ✓ — like healthy cortex", Color::Green)
+    } else if sigma < 0.9 {
+        ("subcritical — activity dies out", Color::Yellow)
+    } else {
+        ("supercritical — activity runs away", Color::Red)
+    };
+    lines.extend(sci_metric(
+        "Branching ratio σ",
+        fmt_f64(sigma),
+        s_tag,
+        s_c,
+        "Does one spike trigger ~one more? σ≈1 is criticality — the regime real \
+         cortex self-organises to (Beggs & Plenz 2003), best for computation.",
+    ));
+
+    // Avalanche exponent.
+    let av = r.avalanche_size_exp;
+    lines.extend(sci_metric(
+        "Avalanche size exponent",
+        fmt_f64(av),
+        "criticality ≈ −1.5",
+        Color::Green,
+        "Cascade sizes follow a power law; an exponent near −1.5 is the fingerprint \
+         of a critical network (Beggs & Plenz 2003).",
+    ));
+
+    // Burst regularity.
+    lines.extend(sci_metric(
+        "Inter-burst interval",
+        fmt_ibi(r.ibi_mean_ms, r.ibi_cv),
+        "CV<1 = fairly regular",
+        Color::Green,
+        "Average gap between bursts and its variability (coefficient of variation).",
+    ));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  In short: these are the same metrics neuroscientists use to check that a",
+        dim,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  cultured network behaves like living cortex — computed live from the sim.",
+        dim,
+    )));
+
+    let p = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(p, area);
+}
+
+/// One biology metric as two lines: a headline (label + value + verdict) and a
+/// plain-language explanation beneath it.
+fn sci_metric(
+    label: &str,
+    value: String,
+    tag: &str,
+    tag_color: Color,
+    note: &str,
+) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled(format!("  {label:<24}"), Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{value:<12}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                tag.to_string(),
+                Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(
+            format!("      {note}"),
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]
+}
+
 fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
     let groups: Vec<(&str, &str)> = match app.active_tab {
         Tab::Dashboard => vec![
@@ -901,6 +1050,12 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("Space", "play/pause"),
             ("r", "reset"),
             ("+/-", "speed"),
+            ("Tab", "view"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        Tab::Science => vec![
+            ("2", "simulate"),
             ("Tab", "view"),
             ("?", "help"),
             ("q", "quit"),
@@ -989,11 +1144,26 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
             lines.push(Line::from(""));
             lines.push(help_head("Reading the panels"));
-            lines.push(help_row("Pong", "yellow ball crosses left→right; cyan paddle should track it"));
-            lines.push(help_row("Learning curve", "hit % over events played — climbs as it learns"));
-            lines.push(help_row("Skill", "overall & recent hit rate; exploration shrinks over time"));
-            lines.push(help_row("Sensory input", "16 Y-bands; the lit bar = ball height the culture senses"));
-            lines.push(help_row("State", "step count, hits/misses, and ball-y vs decoded paddle target"));
+            lines.push(help_row(
+                "Pong",
+                "yellow ball crosses left→right; cyan paddle should track it",
+            ));
+            lines.push(help_row(
+                "Learning curve",
+                "hit % over events played — climbs as it learns",
+            ));
+            lines.push(help_row(
+                "Skill",
+                "overall & recent hit rate; exploration shrinks over time",
+            ));
+            lines.push(help_row(
+                "Sensory input",
+                "16 Y-bands; the lit bar = ball height the culture senses",
+            ));
+            lines.push(help_row(
+                "State",
+                "step count, hits/misses, and ball-y vs decoded paddle target",
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "  The culture learns Pong by reward-modulated Hebbian pursuit: it",
@@ -1005,6 +1175,17 @@ fn draw_help(frame: &mut Frame, app: &App) {
             )));
             lines.push(Line::from(Span::styled(
                 "  there; hits reward the synapses that produced the move.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Tab::Science => {
+            lines.push(help_head("Science"));
+            lines.push(Line::from(Span::styled(
+                "  Plain-language reading of the last simulation's biology metrics",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  (firing rate, bursts, criticality). Run a sim (2) to populate it.",
                 Style::default().fg(Color::DarkGray),
             )));
         }
