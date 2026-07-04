@@ -8,7 +8,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Circle, Points};
+use ratatui::widgets::canvas::{Canvas, Points};
 use ratatui::widgets::{
     Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
     Paragraph, Sparkline, Wrap,
@@ -657,13 +657,35 @@ fn draw_pong_canvas(
     let (bx, by) = (g.ball_x as f64, g.ball_y as f64);
     let py = g.paddle_y as f64;
 
-    // Paddle as a thick vertical bar (a dense strip of points) on the right.
+    // Classic Pong: a dashed centre net, a solid square ball, a solid paddle.
+    // Everything is drawn as dense point grids so shapes render *filled* (not
+    // outlines) at cell resolution — the retro block look.
+    let mut net: Vec<(f64, f64)> = Vec::new();
+    let mut k = 0.0;
+    while k < 1.0 {
+        net.push((0.5, k));
+        k += 0.05; // dashed: one dot every 0.05
+    }
+
+    // Ball: filled square (~square on screen given ~2:1 cells → x narrower).
+    let (bw, bh) = (0.02, 0.035);
+    let mut ball: Vec<(f64, f64)> = Vec::new();
+    for a in 0..=6 {
+        for b in 0..=6 {
+            ball.push((
+                (bx - bw + 2.0 * bw * a as f64 / 6.0).clamp(0.0, 1.0),
+                (by - bh + 2.0 * bh * b as f64 / 6.0).clamp(0.0, 1.0),
+            ));
+        }
+    }
+    // Paddle: filled vertical bar hugging the right edge.
     let mut paddle: Vec<(f64, f64)> = Vec::new();
-    let n = 20;
-    for k in 0..=n {
-        let y = (py - 0.1 + 0.2 * k as f64 / n as f64).clamp(0.0, 1.0);
-        for col in [0.95, 0.97, 0.99] {
-            paddle.push((col, y));
+    for a in 0..=5 {
+        for b in 0..=28 {
+            paddle.push((
+                0.955 + 0.045 * a as f64 / 5.0,
+                (py - 0.11 + 0.22 * b as f64 / 28.0).clamp(0.0, 1.0),
+            ));
         }
     }
 
@@ -675,22 +697,23 @@ fn draw_pong_canvas(
     let canvas = Canvas::default()
         .block(panel(title, playing))
         .marker(Marker::Block)
+        // Black court so the white ball / cyan paddle pop on any terminal theme.
+        .background_color(Color::Black)
         .x_bounds([0.0, 1.0])
         .y_bounds([0.0, 1.0])
         .paint(move |ctx| {
             ctx.draw(&Points {
+                coords: &net,
+                color: Color::DarkGray,
+            });
+            ctx.draw(&Points {
                 coords: &paddle,
                 color: CYAN,
             });
-            // Ball as concentric circles → a clearly round, filled-looking ball.
-            for radius in [0.05, 0.035, 0.02] {
-                ctx.draw(&Circle {
-                    x: bx,
-                    y: by,
-                    radius,
-                    color: Color::LightYellow,
-                });
-            }
+            ctx.draw(&Points {
+                coords: &ball,
+                color: Color::White,
+            });
         });
     frame.render_widget(canvas, area);
 }
@@ -757,6 +780,7 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area:
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1), // plain-language verdict
             Constraint::Length(2),
             Constraint::Length(2),
             Constraint::Length(2),
@@ -766,27 +790,46 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area:
     let hit = trainer.hit_rate().clamp(0.0, 1.0);
     let recent = trainer.recent_hit_rate(200).clamp(0.0, 1.0);
     let explore = (trainer.sigma() / 0.3).clamp(0.0, 1.0);
+    let events = trainer.hits() + trainer.misses();
+
+    // A one-line verdict a non-scientist can read at a glance.
+    let (verdict, vcolor) = if events < 40 {
+        ("🧠 warming up — just starting to play…", Color::Gray)
+    } else if recent >= 0.7 {
+        ("🧠 playing well — returning most balls!", Color::Green)
+    } else if recent >= 0.45 {
+        ("🧠 getting the hang of it…", Color::Yellow)
+    } else {
+        ("🧠 still learning — missing a lot", Color::Red)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            verdict,
+            Style::default().fg(vcolor).add_modifier(Modifier::BOLD),
+        ))),
+        rows[0],
+    );
 
     frame.render_widget(
         Gauge::default()
             .gauge_style(Style::default().fg(Color::Green))
             .ratio(hit as f64)
             .label(format!("overall hit {:.0}%", hit * 100.0)),
-        rows[0],
+        rows[1],
     );
     frame.render_widget(
         Gauge::default()
             .gauge_style(Style::default().fg(CYAN))
             .ratio(recent as f64)
             .label(format!("recent hit {:.0}%", recent * 100.0)),
-        rows[1],
+        rows[2],
     );
     frame.render_widget(
         Gauge::default()
             .gauge_style(Style::default().fg(Color::Magenta))
             .ratio(explore as f64)
             .label(format!("exploration {:.2}", trainer.sigma())),
-        rows[2],
+        rows[3],
     );
 }
 
