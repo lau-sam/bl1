@@ -291,6 +291,15 @@ impl PursuitAgent {
         }
     }
 
+    /// The most recent `n` outcomes in time order (oldest→newest); `true` = hit.
+    pub fn recent_outcomes(&self, n: usize) -> Vec<bool> {
+        let start = self.events.len().saturating_sub(n);
+        self.events[start..]
+            .iter()
+            .map(|(_, e)| *e == Event::Hit)
+            .collect()
+    }
+
     /// Hit rate over the most recent `n` events (recent skill).
     pub fn recent_hit_rate(&self, n: usize) -> f32 {
         if self.events.is_empty() {

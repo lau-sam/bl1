@@ -626,7 +626,11 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(9)])
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3), // per-event hit/miss timeline
+            Constraint::Length(9),
+        ])
         .split(area);
     let top = Layout::default()
         .direction(Direction::Horizontal)
@@ -635,6 +639,8 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
     draw_pong_canvas(frame, trainer, top[0], app.training);
     draw_learning_chart(frame, trainer, top[1]);
 
+    draw_outcomes(frame, trainer, outer[1]);
+
     let bottom = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -642,10 +648,43 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Percentage(30),
             Constraint::Percentage(34),
         ])
-        .split(outer[1]);
+        .split(outer[2]);
     draw_train_gauges(frame, trainer, bottom[0]);
     draw_sensory(frame, trainer, bottom[1]);
     draw_train_stats(frame, trainer, app, bottom[2]);
+}
+
+/// A per-event hit/miss timeline: one coloured block per ball, oldest→newest,
+/// so the early red (misses) visibly turns green (hits) as the culture learns.
+fn draw_outcomes(frame: &mut Frame, trainer: &bl1_games::PursuitAgent, area: Rect) {
+    let block = panel(
+        " Outcomes — every ball, oldest → newest (green hit · red miss) ",
+        false,
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let w = inner.width.max(1) as usize;
+    let outs = trainer.recent_outcomes(w);
+    if outs.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "no balls yet…",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            inner,
+        );
+        return;
+    }
+    let spans: Vec<Span> = outs
+        .iter()
+        .map(|&hit| {
+            Span::styled(
+                "█",
+                Style::default().fg(if hit { Color::Green } else { Color::Red }),
+            )
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn draw_pong_canvas(
@@ -1172,6 +1211,10 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row(
                 "Learning curve",
                 "hit % over events played — climbs as it learns",
+            ));
+            lines.push(help_row(
+                "Outcomes",
+                "every ball as a dot: green = hit, red = miss (time →)",
             ));
             lines.push(help_row(
                 "Skill",
