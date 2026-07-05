@@ -126,6 +126,7 @@ dependencies = [
  "bl1-sim",
  "clap",
  "crossterm",
+ "libc",
  "ratatui",
 ]
 

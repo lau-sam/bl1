@@ -70,6 +70,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
             }
         }
         if app.should_quit {
+            app.stop_doom(); // don't leave an orphan ViZDoom window behind
             return Ok(());
         }
     }

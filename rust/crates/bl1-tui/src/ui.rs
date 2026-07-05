@@ -804,28 +804,46 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // stat line
+            Constraint::Length(2), // stat lines
             Constraint::Min(0),    // kills sparkline
             Constraint::Length(1), // note
         ])
         .split(inner);
 
-    let last = s.kills.last().copied().unwrap_or(0);
-    let stat = if s.kills.is_empty() {
-        "waiting for the first episode…  (Doom opens in its own window)".to_string()
+    let total_kills: u32 = s.kills.iter().sum();
+    let accuracy = if s.shots > 0 {
+        100.0 * total_kills as f64 / s.shots as f64
     } else {
-        format!(
-            "episode {}/{}   last {} kills   mean {:.2} kills/ep   (real Doom, not the arena below)",
-            s.kills.len(),
-            s.total_eps.max(s.kills.len()),
-            last,
-            s.mean_kills()
-        )
+        0.0
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(stat, Style::default().fg(Color::Gray)))),
-        rows[0],
-    );
+    let stats = if s.kills.is_empty() {
+        vec![Line::from(Span::styled(
+            "waiting for the first episode…  (Doom opens in its own window)",
+            Style::default().fg(Color::Gray),
+        ))]
+    } else {
+        vec![
+            Line::from(Span::styled(
+                format!(
+                    "episode {}   {} kills total · mean {:.2}/ep · last {} · accuracy {:.0}%",
+                    s.kills.len(),
+                    total_kills,
+                    s.mean_kills(),
+                    s.kills.last().copied().unwrap_or(0),
+                    accuracy,
+                ),
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "this session: {} frames · {} shots   ·   lifetime: {} frames (across sessions)",
+                    s.frames, s.shots, s.lifetime_frames,
+                ),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]
+    };
+    frame.render_widget(Paragraph::new(stats), rows[0]);
 
     if s.kills.is_empty() {
         frame.render_widget(

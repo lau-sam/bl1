@@ -558,18 +558,22 @@ Doom buttons.
 cd rust && cargo build --release -p bl1-games        # build the brain server
 pip install vizdoom numpy                            # ViZDoom ships scenarios + a free WAD
 python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 80
+#   --episodes 0                  runs until Ctrl-C (unbounded)
 #   … --reservoir --neurons 800   to run the recurrent culture as the brain
 ```
 
 Or launch it straight from the cockpit: open the **Train** tab (`3`), pick **Doom — real (ViZDoom)**
 in the menu (set the substrate, scenario, and seed there too), and press **`Enter`**. The TUI
 pre-flights the prerequisites (brain built, ViZDoom installed), tells you exactly what's missing if
-not, otherwise spawns the bridge so real Doom opens in its own window, and streams the session's live
-kills/episode into a monitor panel. It's a **separate process/brain** — `Esc` returns to the menu (and
-stops the session), and menu changes apply to the *next* launch. `r` relaunches with the current
-settings. The real-Doom readout **persists** per substrate to `brains/doom_real_<substrate>.yaml`
-(saved periodically + on exit, auto-loaded on the next launch), so the culture resumes where it left
-off — and the file is shareable like the TUI-game brains. On the CLI, use
+not, otherwise spawns the bridge so real Doom opens in its own window (unbounded — it runs until you
+stop it), and streams the session's live signal into a monitor panel: kills/episode + curve, plus
+**shots**, **frames this session**, accuracy, and **lifetime frames across sessions** so you can see
+progression. It's a **separate process/brain** — `Esc` returns to the menu, which **cleanly stops** the
+whole session (ViZDoom window + brain, via a SIGTERM to the process group); quitting `bl1` does the
+same, so nothing is left orphaned. Menu changes apply to the *next* launch; `r` relaunches. The
+real-Doom readout **persists** per substrate to `brains/doom_real_<substrate>.yaml` (saved periodically
++ on exit, auto-loaded on the next launch), so the culture resumes where it left off — and the file is
+shareable like the TUI-game brains. On the CLI, use
 `vizdoom_bridge.py --brain-file PATH` for the same.
 
 This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real

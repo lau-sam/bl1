@@ -29,7 +29,9 @@ Example:
 from __future__ import annotations
 
 import argparse
+import itertools
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -176,8 +178,13 @@ def main() -> None:
         return b
 
     total_kills = 0
+    frames = 0  # decisions taken this session
+    shots = 0   # ATTACK presses this session
+    # 0 (or less) episodes = run until stopped (Esc in the TUI / Ctrl-C / SIGTERM).
+    ep_iter = itertools.count() if args.episodes <= 0 else range(args.episodes)
+    total_str = "inf" if args.episodes <= 0 else str(args.episodes)
     try:
-        for ep in range(args.episodes):
+        for ep in ep_iter:
             game.new_episode()
             prev_reward = 0.0
             prev_kills = 0.0
@@ -193,6 +200,8 @@ def main() -> None:
                 shoot = actions[-1] if len(actions) >= 2 else 0.0
                 buttons = [1 if turn < 0.4 else 0, 1 if turn > 0.6 else 0, 1 if shoot > 0.5 else 0]
                 game.make_action(buttons, args.frame_skip)
+                frames += 1
+                shots += buttons[2]
 
                 # Dense reward for the action just taken: a big kill bonus, a small
                 # penalty for taking damage, and — crucially — a dense shaping term
@@ -217,11 +226,14 @@ def main() -> None:
 
             ep_kills = game.get_game_variable(vzd.GameVariable.KILLCOUNT)
             total_kills += ep_kills
-            print(f"episode {ep + 1:>3}/{args.episodes}: kills {ep_kills:.0f}  "
-                  f"(mean {total_kills / (ep + 1):.2f})")
+            # The TUI monitor parses this line (kills / shots / frames per token).
+            print(f"episode {ep + 1:>3}/{total_str}: kills {ep_kills:.0f}  "
+                  f"shots {shots}  frames {frames}  (mean {total_kills / (ep + 1):.2f})")
+    except (KeyboardInterrupt, SystemExit):
+        pass
     finally:
         # Graceful shutdown: send the empty line so the brain saves its readout,
-        # close stdin, and give it a moment to write before terminating.
+        # close stdin, give it a moment to write, then close the Doom engine.
         try:
             brain.stdin.write("\n")
             brain.stdin.flush()
@@ -233,11 +245,12 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             brain.terminate()
         game.close()
-
-    print(f"\nDone. {total_kills} kills over {args.episodes} episodes "
-          f"({total_kills / max(1, args.episodes):.2f}/episode).")
+        print(f"\nStopped. {total_kills} kills · {shots} shots · {frames} frames this session.")
 
 
 if __name__ == "__main__":
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
+    # Exit cleanly on SIGTERM/SIGINT so the `finally` above closes ViZDoom and the
+    # brain (the TUI sends SIGTERM to the whole process group to stop a session).
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     main()

@@ -205,13 +205,21 @@ pub fn substrate_label(s: Substrate) -> &'static str {
 /// coarse sensory/motor map).
 pub const DOOM_SCENARIOS: [&str; 3] = ["defend_the_center", "basic", "defend_the_line"];
 
-/// Parse the bridge log into `(kills_per_episode, total_episodes)`.
-///
-/// Bridge lines look like `episode  23/200: kills 4  (mean 2.69)`; everything
-/// else (the ready banner, the final summary) is ignored.
-fn parse_doom_log(text: &str) -> (Vec<u32>, usize) {
-    let mut kills = Vec::new();
-    let mut total = 0usize;
+/// Parsed learning signal from the bridge log.
+#[derive(Default)]
+struct DoomLog {
+    kills: Vec<u32>,
+    total_eps: usize,
+    shots: u64,
+    frames: u64,
+}
+
+/// Parse the bridge log. Lines look like
+/// `episode  23/200: kills 4  shots 51  frames 380  (mean 2.69)`; everything else
+/// (the ready banner, the final summary) is ignored. `shots`/`frames` are the
+/// running session totals from the most recent episode line.
+fn parse_doom_log(text: &str) -> DoomLog {
+    let mut out = DoomLog::default();
     for line in text.lines() {
         let Some(rest) = line.trim_start().strip_prefix("episode ") else {
             continue;
@@ -222,17 +230,27 @@ fn parse_doom_log(text: &str) -> (Vec<u32>, usize) {
         let Some((tot, after)) = after.split_once(':') else {
             continue;
         };
-        // after == " kills 4  (mean 2.69)" → second whitespace token is the count.
-        if let Some(k) = after
-            .split_whitespace()
-            .nth(1)
-            .and_then(|t| t.parse::<u32>().ok())
-        {
-            kills.push(k);
-            total = tot.trim().parse().unwrap_or(total);
+        // after == " kills 4  shots 51  frames 380  (mean 2.69)"
+        let tokens: Vec<&str> = after.split_whitespace().collect();
+        let val = |name: &str| -> Option<u64> {
+            tokens
+                .iter()
+                .position(|t| *t == name)
+                .and_then(|i| tokens.get(i + 1))
+                .and_then(|t| t.parse().ok())
+        };
+        if let Some(k) = val("kills") {
+            out.kills.push(k as u32);
+            out.total_eps = tot.trim().parse().unwrap_or(out.total_eps);
+            if let Some(s) = val("shots") {
+                out.shots = s;
+            }
+            if let Some(f) = val("frames") {
+                out.frames = f;
+            }
         }
     }
-    (kills, total)
+    out
 }
 
 /// A live real-DOOM session spawned from the TUI: the external bridge process
@@ -241,12 +259,20 @@ fn parse_doom_log(text: &str) -> (Vec<u32>, usize) {
 pub struct DoomSession {
     child: std::process::Child,
     log_path: PathBuf,
+    /// Where the culture's readout persists (lifetime frames read from here).
+    brain_file: PathBuf,
     pub scenario: String,
     pub substrate: Substrate,
     pub pid: u32,
     /// Kills per finished episode, in order (the real-Doom learning curve).
     pub kills: Vec<u32>,
     pub total_eps: usize,
+    /// ATTACK presses this session.
+    pub shots: u64,
+    /// Decisions taken this session.
+    pub frames: u64,
+    /// Lifetime decisions across sessions (from the saved brain's step count).
+    pub lifetime_frames: usize,
     pub finished: bool,
 }
 
@@ -689,12 +715,20 @@ impl App {
         ));
         cmd.arg("-u")
             .arg(&script)
-            .args(["--scenario", &scenario, "--episodes", "200", "--seed", &seed])
+            // 0 episodes = run until stopped (Esc); the user controls the length.
+            .args(["--scenario", &scenario, "--episodes", "0", "--seed", &seed])
             .arg("--brain-file")
             .arg(&brain_file)
             .stdin(Stdio::null());
         if substrate == Substrate::Reservoir {
             cmd.args(["--reservoir", "--neurons", "800"]);
+        }
+        // Own process group, so stopping the session can signal the whole tree
+        // (Python bridge + bl1-brain + the ViZDoom engine), not just the parent.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
         }
         if let Ok(log) = fs::File::create(&log_path)
             && let Ok(log2) = log.try_clone()
@@ -707,11 +741,15 @@ impl App {
                 self.doom = Some(DoomSession {
                     child,
                     log_path,
+                    brain_file: brain_file.clone(),
                     scenario: scenario.clone(),
                     substrate,
                     pid,
                     kills: Vec::new(),
                     total_eps: 0,
+                    shots: 0,
+                    frames: 0,
+                    lifetime_frames: 0,
                     finished: false,
                 });
                 self.status = format!(
@@ -729,12 +767,40 @@ impl App {
         self.doom.as_ref().is_some_and(|d| !d.finished)
     }
 
-    /// Terminate the running real-DOOM session, if any.
-    fn stop_doom(&mut self) {
-        if let Some(mut d) = self.doom.take() {
-            let _ = d.child.kill();
-            let _ = d.child.wait();
+    /// Terminate the running real-DOOM session cleanly, if any: signal the whole
+    /// process group (bridge + brain + ViZDoom engine) with SIGTERM so ViZDoom
+    /// closes its window and the brain saves, then SIGKILL anything that lingers.
+    pub fn stop_doom(&mut self) {
+        let Some(mut d) = self.doom.take() else {
+            return;
+        };
+        #[cfg(unix)]
+        {
+            let pid = d.pid as i32;
+            // Negative pid → the whole group (we launched it as a group leader).
+            unsafe {
+                libc::kill(-pid, libc::SIGTERM);
+            }
+            // Give it up to ~1.5 s to tear ViZDoom down and persist the brain.
+            let mut done = false;
+            for _ in 0..30 {
+                if matches!(d.child.try_wait(), Ok(Some(_))) {
+                    done = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            if !done {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
         }
+        #[cfg(not(unix))]
+        {
+            let _ = d.child.kill();
+        }
+        let _ = d.child.wait();
     }
 
     /// Refresh the live real-DOOM session: parse the bridge log for the per-episode
@@ -744,9 +810,18 @@ impl App {
             return;
         };
         if let Ok(text) = fs::read_to_string(&d.log_path) {
-            let (kills, total) = parse_doom_log(&text);
-            d.kills = kills;
-            d.total_eps = total;
+            let parsed = parse_doom_log(&text);
+            d.kills = parsed.kills;
+            d.total_eps = parsed.total_eps;
+            d.shots = parsed.shots;
+            d.frames = parsed.frames;
+        }
+        // Lifetime frames = the saved brain's step count (across sessions).
+        if let Ok(text) = fs::read_to_string(&d.brain_file)
+            && let Some(line) = text.lines().find(|l| l.trim_start().starts_with("step_idx:"))
+            && let Some(v) = line.split(':').nth(1).and_then(|t| t.trim().parse::<usize>().ok())
+        {
+            d.lifetime_frames = v;
         }
         // Has the process exited?
         if let Ok(Some(_)) = d.child.try_wait() {
@@ -1191,12 +1266,13 @@ mod tests {
     fn parses_doom_bridge_log() {
         let log = "\
 bl1-brain ready: 32 inputs, 3 action heads, substrate feed-forward bank
-episode   1/200: kills 0  (mean 0.00)
-episode   2/200: kills 3  (mean 1.50)
-episode   3/200: kills 2  (mean 1.67)
-Done. 5.0 kills over 3 episodes (1.67/episode).";
-        let (kills, total) = parse_doom_log(log);
-        assert_eq!(kills, vec![0, 3, 2]);
-        assert_eq!(total, 200);
+episode   1/inf: kills 0  shots 12  frames 40  (mean 0.00)
+episode   2/inf: kills 3  shots 25  frames 88  (mean 1.50)
+episode   3/inf: kills 2  shots 41  frames 150  (mean 1.67)
+Stopped. 5 kills · 41 shots · 150 frames this session.";
+        let parsed = parse_doom_log(log);
+        assert_eq!(parsed.kills, vec![0, 3, 2]);
+        assert_eq!(parsed.shots, 41);
+        assert_eq!(parsed.frames, 150);
     }
 }
