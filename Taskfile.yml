@@ -59,6 +59,12 @@ tasks:
     cmds:
       - cargo run --release -p bl1-games --bin bl1-pong -- {{.CLI_ARGS}}
 
+  doom:
+    desc: Run the closed-loop DOOM aim-and-shoot experiment and print the kill-rate curve
+    dir: rust
+    cmds:
+      - cargo run --release -p bl1-games --bin bl1-doom -- {{.CLI_ARGS}}
+
   pong-sweep:
     desc: Multi-seed parameter sweep for closed-loop Pong learning (writes results/pong_sweep.csv)
     dir: rust

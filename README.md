@@ -415,7 +415,7 @@ dependency-light simulation and a keyboard-driven control panel.
 | `bl1-analysis` | Burst detection (Wagenaar), branching ratio and avalanche exponents (Beggs & Plenz, MLE) |
 | `bl1-mea` | 64-channel and HD-MEA layouts, neuron→electrode mapping, spike detection, LFP |
 | `bl1-sim` | Neuron placement, distance-dependent connectivity, `Culture` factory, YAML config loader |
-| `bl1-games` | Closed-loop DishBrain Pong (`bl1-pong`): sensory encoding, motor decoding, FEP feedback, and agents that **learn** — node-perturbation readout on a feed-forward bank or on the recurrent culture as a reservoir; shareable trained brains |
+| `bl1-games` | Closed-loop games (`bl1-pong`, `bl1-doom`) on a generic node-perturbation `Learner`: a swappable `Substrate` (feed-forward bank or recurrent-culture reservoir) feeds a swappable `Environment` (Pong, DOOM) — the culture **learns** to play both; shareable trained brains |
 | `bl1-tui` | The `bl1` binary: a terminal UI to run and inspect simulations |
 
 From the repo root, `task` wraps the common commands:
@@ -447,14 +447,15 @@ The UI is a mouse- and keyboard-driven cockpit with five views (**Dashboard**, *
   `Enter`/`r` or the **Run** button starts a preview. The simulation runs on a background
   thread — the UI stays responsive with a live spinner while it computes. The raster scrolls
   with the mouse wheel.
-- **Train:** watch the culture **learn Pong live** — `Space` starts/pauses, `+`/`-` change speed,
-  `r` resets to a fresh culture. `b` switches the **substrate** (feed-forward bank ↔ the full
-  recurrent culture as a reservoir); `m` switches **paddle control** (direct teleport ↔ inertial
-  smooth pursuit, where the culture must *lead* the ball); `w`/`o` **save/load** the trained brain to
-  a shareable file (`brains/pong_brain.yaml`). A Canvas renders the game (ball + tracking paddle) in
-  real time next to a live hit-rate learning curve (Chart), a per-event hit/miss timeline, skill
-  gauges, and the culture's sensory bump (Sparkline). Built from ratatui's Canvas / Chart / Gauge /
-  Sparkline widgets.
+- **Train:** watch the culture **learn a game live** — `Space` starts/pauses, `+`/`-` change speed,
+  `r` resets to a fresh culture. `g` switches the **game** (Pong ↔ DOOM aim-and-shoot); `b` switches
+  the **substrate** (feed-forward bank ↔ the full recurrent culture as a reservoir); `m` switches
+  **control** (direct teleport ↔ inertial smooth pursuit, where the culture must *lead* the target);
+  `w`/`o` **save/load** the trained brain to a shareable file (`brains/<game>_brain.yaml`). A Canvas
+  renders the game in real time — Pong's ball + tracking paddle, or DOOM's first-person arena where a
+  red enemy swells as it nears and the crosshair turns green on target — next to a live hit-rate
+  learning curve (Chart), a per-event hit/miss timeline, skill gauges, and the culture's sensory bump
+  (Sparkline). Built from ratatui's Canvas / Chart / Gauge / Sparkline widgets.
 - **Science:** the biology metrics of the last run in plain language — firing rate, network bursts
   (vs Wagenaar 2006), branching ratio σ and avalanche exponent (criticality, Beggs & Plenz 2003) —
   each with a one-line explanation and a "matches living cortex?" verdict.
@@ -516,6 +517,26 @@ task pong -- --pursuit   --smooth --steps 6000     # inertial paddle — the cul
 
 The culture genuinely learns closed-loop game play on both substrates. Making the harder
 spike-correlation route (R-STDP) converge is still an open problem — **contributions welcome.**
+
+### Closed-loop DOOM (aim-and-shoot)
+
+The learning machinery is **game-agnostic**: a swappable `Substrate` (feed-forward bank or recurrent
+reservoir) feeds a swappable `Environment` behind one generic node-perturbation `Learner`. DOOM is
+the second environment — a first-person aim-and-shoot arena. An enemy appears at a bearing and closes
+in; the culture senses the bearing as a place-code bump and its readout drives the **view aim**. When
+the enemy reaches firing range, an aligned shot is a **kill** (predictable, rewarded), a misaligned
+one a **miss** (Kagan-2022-style feedback). Same rule, same substrates, new game — adding it was one
+`impl Environment`, no new learning code.
+
+```bash
+task doom -- --steps 6000                       # feed-forward bank learns to aim (~40% kill rate)
+task doom -- --reservoir --steps 3000 --neurons 400  # the recurrent culture aims as a reservoir
+task doom -- --smooth --steps 6000              # inertial aim — the culture must lead the enemy
+```
+
+It prints kills/misses, a kill-rate curve, and a learning-improvement score, and can export a
+per-event CSV (`--csv path`). The enemy is a simulated sprite in a simulated arena — the point is that
+the **same simulated culture** that learns Pong also learns to aim, with zero changes to the learner.
 
 ## License
 
