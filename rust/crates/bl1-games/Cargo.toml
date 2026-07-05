@@ -14,6 +14,10 @@ path = "src/bin/pong.rs"
 name = "bl1-pong-sweep"
 path = "src/bin/sweep.rs"
 
+[[bin]]
+name = "bl1-doom"
+path = "src/bin/doom.rs"
+
 [dependencies]
 bl1-core = { workspace = true }
 bl1-sim = { workspace = true }

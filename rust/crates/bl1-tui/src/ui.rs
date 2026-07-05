@@ -8,13 +8,13 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Points};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points};
 use ratatui::widgets::{
     Axis, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem, ListState,
     Paragraph, Sparkline, Wrap,
 };
 
-use bl1_games::{EnvView, PongState};
+use bl1_games::{DoomState, EnvView, PongState};
 
 use crate::app::{App, Focus, RunResult, Tab};
 
@@ -608,16 +608,16 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
         let p = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  Live training — a cultured network learns to play Pong.",
+                "  Live training — a cultured network learns to play a game.",
                 Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  Press Space to start; watch the paddle track the ball and the",
+                "  Press Space to start; g switches game (Pong ↔ DOOM), b switches",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(
-                "  hit-rate curve climb as reward-modulated plasticity kicks in.",
+                "  substrate. Watch the hit-rate curve climb as the culture learns.",
                 Style::default().fg(Color::DarkGray),
             )),
         ])
@@ -693,6 +693,7 @@ fn draw_outcomes(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect
 fn draw_game_canvas(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect, playing: bool) {
     match trainer.view() {
         EnvView::Pong(s) => draw_pong_canvas(frame, s, area, playing),
+        EnvView::Doom(s) => draw_doom_canvas(frame, s, area, playing),
     }
 }
 
@@ -763,6 +764,181 @@ fn draw_pong_canvas(frame: &mut Frame, g: &PongState, area: Rect, playing: bool)
             });
         });
     frame.render_widget(canvas, area);
+}
+
+fn draw_doom_canvas(frame: &mut Frame, s: &DoomState, area: Rect, playing: bool) {
+    // Split off a HUD strip below the scene: a legend + a live status line, so a
+    // viewer can tell what the red block is and what just happened.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(4)])
+        .split(area);
+
+    // Enemy screen column from its bearing relative to the view; proximity grows
+    // as the countdown runs down (the enemy closing in), so the sprite swells.
+    let rel = (s.enemy_x - s.heading) as f64;
+    let ex = (0.5 + rel * 0.5).clamp(0.0, 1.0);
+    let prox = 1.0 - s.countdown as f64 / s.encounter_frames.max(1) as f64;
+    let hw = 0.05 + 0.13 * prox;
+    let hh = 0.10 + 0.26 * prox;
+    let aligned = (s.enemy_x - s.heading).abs() <= 0.1;
+    let hit_flash = s.flash > 0 && s.last == bl1_games::Event::Hit;
+
+    // Enemy sprite: a dense body block with two dark eyes and a ground shadow, so
+    // it reads as a creature rather than a stray square.
+    let mut body: Vec<(f64, f64)> = Vec::new();
+    let mut x = ex - hw;
+    while x <= ex + hw {
+        let mut y = 0.5 - hh;
+        while y <= 0.5 + hh {
+            body.push((x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
+            y += 0.01;
+        }
+        x += 0.005;
+    }
+    let eyes = vec![
+        (ex - hw * 0.4, 0.5 + hh * 0.45),
+        (ex + hw * 0.4, 0.5 + hh * 0.45),
+    ];
+    let mut shadow: Vec<(f64, f64)> = Vec::new();
+    let mut sx = ex - hw;
+    while sx <= ex + hw {
+        shadow.push((sx.clamp(0.0, 1.0), (0.5 - hh - 0.02).max(0.0)));
+        sx += 0.005;
+    }
+
+    // On a kill, a bright star-burst explodes over the enemy; the muzzle flashes
+    // at the bottom-centre gun on every shot.
+    let mut burst: Vec<(f64, f64)> = Vec::new();
+    if hit_flash {
+        for k in 0..40 {
+            let a = k as f64 / 40.0 * std::f64::consts::TAU;
+            for r in [0.04, 0.08, 0.12] {
+                burst.push(((ex + r * a.cos()).clamp(0.0, 1.0), (0.5 + r * a.sin()).clamp(0.0, 1.0)));
+            }
+        }
+    }
+    let mut muzzle: Vec<(f64, f64)> = Vec::new();
+    if s.flash > 0 {
+        let mut bx = 0.45;
+        while bx <= 0.55 {
+            let mut by = 0.0;
+            while by <= 0.12 {
+                muzzle.push((bx, by));
+                by += 0.012;
+            }
+            bx += 0.006;
+        }
+    }
+
+    // Static corridor drawn in one-point perspective (vanishing box in the
+    // centre), plus a couple of receding floor lines, so it reads as a room.
+    let gray = Color::Rgb(90, 90, 110);
+    let floor = Color::Rgb(60, 60, 75);
+    let (vl, vr, vt, vb) = (0.36, 0.64, 0.62, 0.38);
+    let walls = [
+        (0.0, 1.0, vl, vt),
+        (0.0, 0.0, vl, vb),
+        (1.0, 1.0, vr, vt),
+        (1.0, 0.0, vr, vb),
+        (vl, vt, vr, vt),
+        (vl, vb, vr, vb),
+        (vl, vb, vl, vt),
+        (vr, vb, vr, vt),
+    ];
+    let floor_lines = [(0.0, 0.13, 1.0, 0.13), (0.13, 0.26, 0.87, 0.26)];
+
+    let title = if playing {
+        " DOOM — live "
+    } else {
+        " DOOM — paused "
+    };
+    let canvas = Canvas::default()
+        .block(panel(title, playing))
+        .marker(Marker::Block)
+        .background_color(Color::Black)
+        .x_bounds([0.0, 1.0])
+        .y_bounds([0.0, 1.0])
+        .paint(move |ctx| {
+            for &(x1, y1, x2, y2) in &floor_lines {
+                ctx.draw(&CanvasLine { x1, y1, x2, y2, color: floor });
+            }
+            for &(x1, y1, x2, y2) in &walls {
+                ctx.draw(&CanvasLine { x1, y1, x2, y2, color: gray });
+            }
+            ctx.draw(&Points {
+                coords: &shadow,
+                color: Color::Rgb(30, 30, 30),
+            });
+            ctx.draw(&Points {
+                coords: &body,
+                color: if hit_flash { Color::Yellow } else { Color::Red },
+            });
+            ctx.draw(&Points {
+                coords: &eyes,
+                color: Color::Rgb(20, 20, 20),
+            });
+            if !burst.is_empty() {
+                ctx.draw(&Points {
+                    coords: &burst,
+                    color: Color::Yellow,
+                });
+            }
+            if !muzzle.is_empty() {
+                ctx.draw(&Points {
+                    coords: &muzzle,
+                    color: Color::Rgb(255, 220, 120),
+                });
+            }
+            // Crosshair, fixed at screen centre — green when on target.
+            let cross = if aligned { Color::Green } else { CYAN };
+            ctx.draw(&CanvasLine { x1: 0.44, y1: 0.5, x2: 0.56, y2: 0.5, color: cross });
+            ctx.draw(&CanvasLine { x1: 0.5, y1: 0.42, x2: 0.5, y2: 0.58, color: cross });
+        });
+    frame.render_widget(canvas, rows[0]);
+
+    draw_doom_hud(frame, s, aligned, prox, rows[1]);
+}
+
+/// The legend + live status strip under the DOOM scene: what the symbols mean,
+/// and what the culture is doing right now (tracking / locked / kill / miss).
+fn draw_doom_hud(frame: &mut Frame, s: &DoomState, aligned: bool, prox: f64, area: Rect) {
+    let legend = Line::from(vec![
+        Span::styled("🔴 enemy", Style::default().fg(Color::Red)),
+        Span::styled("   ✚ your aim", Style::default().fg(CYAN)),
+        Span::styled(" (green = locked on)", Style::default().fg(Color::DarkGray)),
+        Span::styled("   💥 shot fired", Style::default().fg(Color::Yellow)),
+    ]);
+
+    // Live verdict: a fresh kill/miss flash wins, else lock-on vs. tracking.
+    let (status, scolor) = if s.flash > 0 && s.last == bl1_games::Event::Hit {
+        ("💀 KILL!", Color::Green)
+    } else if s.flash > 0 && s.last == bl1_games::Event::Miss {
+        ("✗ MISS", Color::Red)
+    } else if aligned {
+        ("🔒 LOCKED ON", Color::Green)
+    } else {
+        ("… tracking", Color::Yellow)
+    };
+    // A distance meter that fills as the enemy closes in.
+    let filled = (prox * 8.0).round() as usize;
+    let bar: String = (0..8).map(|i| if i < filled { '▓' } else { '░' }).collect();
+    let status_line = Line::from(vec![
+        Span::styled(
+            format!("{status}  "),
+            Style::default().fg(scolor).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("kills {} · misses {}  enemy [{}]", s.kills, s.misses, bar),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+
+    let block = panel(" What you're seeing ", false);
+    frame.render_widget(
+        Paragraph::new(vec![legend, status_line]).block(block),
+        area,
+    );
 }
 
 fn draw_learning_chart(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
@@ -860,7 +1036,7 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: 
     let (verdict, vcolor) = if events < 40 {
         ("🧠 warming up — just starting to play…", Color::Gray)
     } else if recent >= 0.7 {
-        ("🧠 playing well — returning most balls!", Color::Green)
+        ("🧠 playing well — scoring most encounters!", Color::Green)
     } else if recent >= 0.45 {
         ("🧠 getting the hang of it…", Color::Yellow)
     } else {
@@ -898,8 +1074,17 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: 
 }
 
 fn draw_sensory(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
-    let block = panel(" Sensory input — ball-Y place code ", false);
-    let legend = "◄ ball low    the peak = ball height the culture senses    ball high ►";
+    let (title, legend) = match trainer.view() {
+        EnvView::Pong(_) => (
+            " Sensory input — ball-Y place code ",
+            "◄ ball low    the peak = ball height the culture senses    ball high ►",
+        ),
+        EnvView::Doom(_) => (
+            " Sensory input — enemy-bearing place code ",
+            "◄ enemy left    the peak = enemy bearing the culture senses    enemy right ►",
+        ),
+    };
+    let block = panel(title, false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -940,13 +1125,21 @@ fn draw_sensory(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect)
 }
 
 fn draw_train_stats(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, app: &App, area: Rect) {
-    let EnvView::Pong(g) = trainer.view();
-    let (sense_label, sense_val, act_label, act_val) =
-        ("ball y", g.ball_y, "paddle → target", g.paddle_y);
+    // Game-specific sense/actuator readout.
+    let (outcome_label, sense_label, sense_val, act_label, act_val) = match trainer.view() {
+        EnvView::Pong(g) => ("hits / misses", "ball y", g.ball_y, "paddle → target", g.paddle_y),
+        EnvView::Doom(s) => (
+            "kills / misses",
+            "enemy x",
+            s.enemy_x,
+            "aim → target",
+            s.heading,
+        ),
+    };
     let lines = vec![
         stat("step", format!("{}", trainer.step_idx())),
         stat(
-            "hits / misses",
+            outcome_label,
             format!("{} / {}", trainer.hits(), trainer.misses()),
         ),
         stat("speed", format!("{} steps/frame", app.train_speed)),
@@ -1132,6 +1325,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("Space", "play/pause"),
             ("r", "reset"),
             ("+/-", "speed"),
+            ("g", "game"),
             ("b", "substrate"),
             ("m", "control mode"),
             ("w/o", "save/load brain"),
@@ -1228,6 +1422,10 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("r", "reset to a fresh culture (new seed)"));
             lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
             lines.push(help_row(
+                "g",
+                "game: Pong (track the ball) ↔ DOOM (aim at the enemy and shoot)",
+            ));
+            lines.push(help_row(
                 "b",
                 "substrate: feed-forward bank ↔ recurrent culture (the real bl1-sim brain, heavier)",
             ));
@@ -1237,13 +1435,17 @@ fn draw_help(frame: &mut Frame, app: &App) {
             ));
             lines.push(help_row(
                 "w / o",
-                "save / load the trained brain (brains/pong_brain.yaml — share it!)",
+                "save / load the trained brain (brains/<game>_brain.yaml — share it!)",
             ));
             lines.push(Line::from(""));
             lines.push(help_head("Reading the panels"));
             lines.push(help_row(
                 "Pong",
-                "yellow ball crosses left→right; cyan paddle should track it",
+                "white ball crosses left→right; cyan paddle should track it",
+            ));
+            lines.push(help_row(
+                "DOOM",
+                "red enemy swells as it nears; crosshair turns green when on target",
             ));
             lines.push(help_row(
                 "Learning curve",

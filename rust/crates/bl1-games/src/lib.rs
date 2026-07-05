@@ -9,7 +9,8 @@
 //!
 //! - a [`Substrate`] — the neural representation ([`substrate`]): a feed-forward
 //!   Izhikevich bank or the real recurrent [`bl1_sim::Culture`] as a reservoir;
-//! - an [`Environment`] — the game ([`env`]): [`pong`] (track the ball);
+//! - an [`Environment`] — the game ([`env`]): [`pong`] (track the ball) or
+//!   [`doom`] (aim at the enemy and shoot);
 //! - a [`PaddleControl`] actuator — direct snap or inertial smooth pursuit.
 //!
 //! Add a game by implementing [`Environment`]; add a substrate by implementing
@@ -18,6 +19,7 @@
 pub mod agent;
 pub mod closed_loop;
 pub mod decoding;
+pub mod doom;
 pub mod encoding;
 pub mod env;
 pub mod feedback;
@@ -29,6 +31,7 @@ pub mod trainer;
 
 pub use agent::{AgentParams, RstdpAgent};
 pub use closed_loop::{ClosedLoop, LoopConfig, RunLog};
+pub use doom::{DoomArena, DoomParams, DoomState};
 pub use env::{EnvView, Environment, GameKind};
 pub use learner::{Brain, EnvSpec, LearnParams, Learner, PaddleControl, SubstrateSpec};
 pub use plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};

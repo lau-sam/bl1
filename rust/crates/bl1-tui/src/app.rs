@@ -162,6 +162,8 @@ pub struct App {
     pub train_control: bl1_games::PaddleControl,
     /// Which substrate the trainer learns on (feed-forward vs. recurrent culture).
     pub train_substrate: Substrate,
+    /// Which game the culture is learning (Pong vs. DOOM aim-and-shoot).
+    pub train_game: bl1_games::EnvSpec,
 }
 
 impl App {
@@ -217,18 +219,19 @@ impl App {
             train_seed: 1,
             train_control: bl1_games::PaddleControl::Direct,
             train_substrate: Substrate::Feedforward,
+            train_game: bl1_games::EnvSpec::Pong,
         }
     }
 
-    /// Build a trainer on the current seed with the current substrate + control,
-    /// both orthogonal choices behind one generic `Learner`.
+    /// Build a trainer on the current seed with the current game + substrate +
+    /// control. All three are orthogonal choices behind one generic `Learner`.
     fn build_trainer(&self) -> Box<dyn bl1_games::Trainer> {
         let substrate = match self.train_substrate {
             Substrate::Feedforward => bl1_games::SubstrateSpec::FeedForward { per_band: 32 },
             Substrate::Reservoir => bl1_games::SubstrateSpec::Reservoir { n_neurons: 400 },
         };
         Box::new(bl1_games::Learner::build(
-            bl1_games::EnvSpec::Pong,
+            self.train_game,
             substrate,
             self.train_control,
             self.train_seed,
@@ -307,8 +310,12 @@ impl App {
     pub fn toggle_training(&mut self) {
         self.ensure_trainer();
         self.training = !self.training;
+        let game = match self.train_game {
+            bl1_games::EnvSpec::Pong => "Pong",
+            bl1_games::EnvSpec::Doom => "DOOM",
+        };
         self.status = if self.training {
-            "Training… the culture is learning to play Pong.".to_string()
+            format!("Training… the culture is learning to play {game}.")
         } else {
             "Training paused.".to_string()
         };
@@ -341,6 +348,25 @@ impl App {
         };
     }
 
+    /// Switch the game the culture is learning (Pong ↔ DOOM aim-and-shoot).
+    /// Rebuilds a fresh trainer on the same seed.
+    pub fn toggle_game(&mut self) {
+        self.train_game = match self.train_game {
+            bl1_games::EnvSpec::Pong => bl1_games::EnvSpec::Doom,
+            bl1_games::EnvSpec::Doom => bl1_games::EnvSpec::Pong,
+        };
+        self.trainer = Some(self.build_trainer());
+        self.training = false;
+        self.status = match self.train_game {
+            bl1_games::EnvSpec::Pong => {
+                "Game: Pong — track the ball with the paddle. Retraining from scratch.".to_string()
+            }
+            bl1_games::EnvSpec::Doom => {
+                "Game: DOOM — aim at the enemy and shoot. Retraining from scratch.".to_string()
+            }
+        };
+    }
+
     /// Switch between direct and smooth-pursuit paddle control. The mode is
     /// baked into the agent, so this rebuilds a fresh trainer on the same seed.
     pub fn toggle_control(&mut self) {
@@ -360,9 +386,13 @@ impl App {
         };
     }
 
-    /// Path of the shareable brain file (copy it to hand off a trained culture).
-    fn brain_path() -> &'static Path {
-        Path::new("brains/pong_brain.yaml")
+    /// Path of the shareable brain file, per game (copy it to hand off a trained
+    /// culture).
+    fn brain_path(game: bl1_games::EnvSpec) -> &'static Path {
+        match game {
+            bl1_games::EnvSpec::Pong => Path::new("brains/pong_brain.yaml"),
+            bl1_games::EnvSpec::Doom => Path::new("brains/doom_brain.yaml"),
+        }
     }
 
     /// Save the current trained brain to a shareable YAML file.
@@ -371,7 +401,7 @@ impl App {
             self.status = "Nothing to save — start training first (Space).".to_string();
             return;
         };
-        let path = Self::brain_path();
+        let path = Self::brain_path(self.train_game);
         self.status = match t.save(path) {
             Ok(()) => format!(
                 "Brain saved to {} — share this file to hand off your culture.",
@@ -384,7 +414,7 @@ impl App {
     /// Load a shared brain file and continue training from it. The substrate and
     /// paddle-control mode are restored from the file.
     pub fn load_brain(&mut self) {
-        let path = Self::brain_path();
+        let path = Self::brain_path(self.train_game);
         match bl1_games::load_trainer(path) {
             Ok(agent) => {
                 self.train_control = agent.control();
@@ -392,6 +422,10 @@ impl App {
                     Substrate::Reservoir
                 } else {
                     Substrate::Feedforward
+                };
+                self.train_game = match agent.game_kind() {
+                    bl1_games::GameKind::Pong => bl1_games::EnvSpec::Pong,
+                    bl1_games::GameKind::Doom => bl1_games::EnvSpec::Doom,
                 };
                 self.trainer = Some(agent);
                 self.training = false;

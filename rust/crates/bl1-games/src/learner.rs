@@ -26,6 +26,7 @@ use rand_pcg::Pcg64;
 use serde::{Deserialize, Serialize};
 
 use crate::closed_loop::RunLog;
+use crate::doom::{DoomArena, DoomParams};
 use crate::env::{Environment, EnvView, GameKind};
 use crate::pong::{Event, PongEnv};
 use crate::substrate::{CultureReservoir, FeedForwardBank, Substrate, SubstrateKind, gaussian};
@@ -74,12 +75,14 @@ impl SubstrateSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvSpec {
     Pong,
+    Doom,
 }
 
 impl EnvSpec {
     fn kind(self) -> GameKind {
         match self {
             EnvSpec::Pong => GameKind::Pong,
+            EnvSpec::Doom => GameKind::Doom,
         }
     }
 }
@@ -175,13 +178,23 @@ fn mode_tag(env: EnvSpec, sub: SubstrateKind, control: PaddleControl) -> String 
         (EnvSpec::Pong, SubstrateKind::Reservoir) => {
             if smooth { "reservoir-smooth" } else { "reservoir" }
         }
+        (EnvSpec::Doom, SubstrateKind::FeedForward) => {
+            if smooth { "doom-smooth" } else { "doom-feedforward" }
+        }
+        (EnvSpec::Doom, SubstrateKind::Reservoir) => {
+            if smooth { "doom-reservoir-smooth" } else { "doom-reservoir" }
+        }
     }
     .to_string()
 }
 
 /// Parse a `mode` tag back into its three orthogonal choices.
 fn parse_mode(tag: &str) -> (EnvSpec, SubstrateKind, PaddleControl) {
-    let env = EnvSpec::Pong;
+    let env = if tag.contains("doom") {
+        EnvSpec::Doom
+    } else {
+        EnvSpec::Pong
+    };
     let sub = if tag.contains("reservoir") {
         SubstrateKind::Reservoir
     } else {
@@ -270,6 +283,13 @@ impl Learner {
 
         let environment: Box<dyn Environment> = match env {
             EnvSpec::Pong => Box::new(PongEnv::new(p.target_speed, &mut rng)),
+            EnvSpec::Doom => Box::new(DoomArena::new(
+                DoomParams {
+                    enemy_speed: p.target_speed,
+                    ..DoomParams::default()
+                },
+                &mut rng,
+            )),
         };
 
         Self {
@@ -606,6 +626,29 @@ mod tests {
     }
 
     #[test]
+    fn doom_feedforward_learns_to_aim() {
+        // The same node-perturbation rule should learn to aim in the arena,
+        // beating a random-aim baseline and improving over the run.
+        let mut a = Learner::build(
+            EnvSpec::Doom,
+            SubstrateSpec::FeedForward { per_band: 32 },
+            PaddleControl::Direct,
+            1,
+        );
+        let log = a.run(6000);
+        assert!(
+            log.hit_rate() > 0.40,
+            "expected learned aiming > 40%, got {:.1}%",
+            log.hit_rate() * 100.0
+        );
+        assert!(
+            log.improvement() > 0.0,
+            "expected positive learning trend, got {:+.1} pts",
+            log.improvement() * 100.0
+        );
+    }
+
+    #[test]
     fn single_step_advances_state() {
         let mut a = pong_ff(PaddleControl::Direct);
         a.step();
@@ -651,5 +694,21 @@ mod tests {
         let b = Learner::from_brain(&saved);
         assert_eq!(b.hits(), a.hits());
         assert_eq!(b.brain().w, a.brain().w);
+    }
+
+    #[test]
+    fn doom_brain_roundtrips() {
+        let mut a = Learner::build(
+            EnvSpec::Doom,
+            SubstrateSpec::FeedForward { per_band: 32 },
+            PaddleControl::Direct,
+            5,
+        );
+        a.run(200);
+        let saved = a.brain();
+        assert_eq!(saved.mode, "doom-feedforward");
+        let b = Learner::from_brain(&saved);
+        assert_eq!(b.hits(), a.hits());
+        assert_eq!(b.game_kind(), GameKind::Doom);
     }
 }

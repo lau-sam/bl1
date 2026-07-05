@@ -10,18 +10,21 @@
 
 use rand_pcg::Pcg64;
 
+use crate::doom::DoomState;
 use crate::pong::{Event, PongState};
 
 /// Which game an environment is (for save/load + choosing the UI renderer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameKind {
     Pong,
+    Doom,
 }
 
 impl GameKind {
     pub fn label(self) -> &'static str {
         match self {
             GameKind::Pong => "pong",
+            GameKind::Doom => "doom",
         }
     }
 }
@@ -30,6 +33,7 @@ impl GameKind {
 /// right scene without the learner knowing anything about pixels.
 pub enum EnvView<'a> {
     Pong(&'a PongState),
+    Doom(&'a DoomState),
 }
 
 /// A game the culture can learn to play through a 1-D actuator.
