@@ -51,6 +51,18 @@ struct Cli {
     /// Random seed (reproducible culture + policy).
     #[arg(long, default_value_t = 1)]
     seed: u64,
+
+    /// Readout learning rate.
+    #[arg(long, default_value_t = 0.05)]
+    learning_rate: f32,
+
+    /// Steps over which policy exploration decays from its start to its floor.
+    #[arg(long, default_value_t = 20000)]
+    explore_decay: usize,
+
+    /// Exploration floor (kept > 0 so the culture keeps refining, not freezing).
+    #[arg(long, default_value_t = 0.08)]
+    explore_min: f32,
 }
 
 fn main() -> Result<()> {
@@ -64,6 +76,9 @@ fn main() -> Result<()> {
     let params = BrainParams {
         n_input: cli.inputs,
         n_heads: cli.actions,
+        learning_rate: cli.learning_rate,
+        explore_decay_steps: cli.explore_decay,
+        explore_min: cli.explore_min,
         ..BrainParams::default()
     };
     let mut brain = RemoteBrain::new(params, substrate, cli.seed);
