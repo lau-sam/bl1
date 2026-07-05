@@ -16,3 +16,7 @@ results/
 rust/results/
 brains/
 rust/brains/
+
+# ViZDoom runtime artifacts
+_vizdoom.ini
+_vizdoom/
