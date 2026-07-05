@@ -120,6 +120,8 @@ def main() -> None:
     ap.add_argument("--frame-skip", type=int, default=4, help="Game tics per decision")
     ap.add_argument("--no-window", action="store_true", help="Run headless (no Doom window)")
     ap.add_argument("--brain-bin", default=None, help="Path to the bl1-brain binary")
+    ap.add_argument("--brain-file", default=None,
+                    help="Load/save the culture's readout here (resume across sessions)")
     args = ap.parse_args()
 
     try:
@@ -151,6 +153,8 @@ def main() -> None:
            "--seed", str(args.seed)]
     if args.reservoir:
         cmd += ["--reservoir", "--neurons", str(args.neurons)]
+    if args.brain_file:
+        cmd += ["--load", args.brain_file, "--save", args.brain_file]
     brain = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              text=True, bufsize=1)
     assert brain.stdin and brain.stdout
@@ -216,12 +220,18 @@ def main() -> None:
             print(f"episode {ep + 1:>3}/{args.episodes}: kills {ep_kills:.0f}  "
                   f"(mean {total_kills / (ep + 1):.2f})")
     finally:
+        # Graceful shutdown: send the empty line so the brain saves its readout,
+        # close stdin, and give it a moment to write before terminating.
         try:
-            brain.stdin.write("\n")  # graceful shutdown
+            brain.stdin.write("\n")
             brain.stdin.flush()
+            brain.stdin.close()
         except (BrokenPipeError, ValueError):
             pass
-        brain.terminate()
+        try:
+            brain.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            brain.terminate()
         game.close()
 
     print(f"\nDone. {total_kills} kills over {args.episodes} episodes "

@@ -681,9 +681,17 @@ impl App {
         let mut cmd = Command::new(&python);
         // `-u`: unbuffered stdout, so episode results reach the log live (Python
         // block-buffers when stdout is a file, which would stall the monitor).
+        // A per-substrate brain file so the culture resumes across sessions
+        // (auto-loaded at launch, auto-saved during/at the end of the run).
+        let brain_file = repo.join(format!(
+            "brains/doom_real_{}.yaml",
+            if substrate == Substrate::Reservoir { "reservoir" } else { "feedforward" }
+        ));
         cmd.arg("-u")
             .arg(&script)
             .args(["--scenario", &scenario, "--episodes", "200", "--seed", &seed])
+            .arg("--brain-file")
+            .arg(&brain_file)
             .stdin(Stdio::null());
         if substrate == Substrate::Reservoir {
             cmd.args(["--reservoir", "--neurons", "800"]);
@@ -707,8 +715,9 @@ impl App {
                     finished: false,
                 });
                 self.status = format!(
-                    "Launched real DOOM ({scenario}, {}) — watch the Doom window (pid {pid}); live stats in the Train panel.",
+                    "Launched real DOOM ({scenario}, {}) — pid {pid}; auto-saves/resumes {}.",
                     substrate_label(substrate),
+                    brain_file.display(),
                 );
             }
             Err(e) => self.status = format!("Failed to launch the DOOM bridge: {e}"),

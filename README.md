@@ -567,7 +567,10 @@ pre-flights the prerequisites (brain built, ViZDoom installed), tells you exactl
 not, otherwise spawns the bridge so real Doom opens in its own window, and streams the session's live
 kills/episode into a monitor panel. It's a **separate process/brain** — `Esc` returns to the menu (and
 stops the session), and menu changes apply to the *next* launch. `r` relaunches with the current
-settings.
+settings. The real-Doom readout **persists** per substrate to `brains/doom_real_<substrate>.yaml`
+(saved periodically + on exit, auto-loaded on the next launch), so the culture resumes where it left
+off — and the file is shareable like the TUI-game brains. On the CLI, use
+`vizdoom_bridge.py --brain-file PATH` for the same.
 
 This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real
 Doom engine, over the same node-perturbation rule that plays Pong. It **works** — on

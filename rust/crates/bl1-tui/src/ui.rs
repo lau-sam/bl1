@@ -771,7 +771,7 @@ fn draw_doom_playing(frame: &mut Frame, app: &App, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "  Doom is in its own window · r relaunch · Esc back to menu",
+            "  Doom is in its own window · auto-saves to brains/doom_real_*.yaml · r relaunch · Esc menu",
             Style::default().fg(Color::DarkGray),
         )))
         .block(Block::default().borders(Borders::ALL)),

@@ -20,8 +20,31 @@
 
 use rand::SeedableRng;
 use rand_pcg::Pcg64;
+use serde::{Deserialize, Serialize};
 
 use crate::substrate::{Substrate, gaussian};
+
+/// A portable snapshot of a remote brain's learned readout + the culture identity
+/// needed to reconstruct it, so a real-DOOM session can be saved and resumed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteBrainState {
+    pub version: u32,
+    /// `feedforward` or `reservoir` — must match on load.
+    pub substrate: String,
+    pub n_input: usize,
+    pub n_heads: usize,
+    /// Feed-forward neurons per band (0 for reservoir).
+    #[serde(default)]
+    pub per_band: usize,
+    /// Reservoir size (0 for feed-forward).
+    #[serde(default)]
+    pub n_neurons: usize,
+    pub seed: u64,
+    pub w: Vec<Vec<f32>>,
+    pub b: Vec<f32>,
+    pub baseline: f32,
+    pub step_idx: usize,
+}
 
 /// Tunables for the remote brain (shared learning + exploration schedule).
 #[derive(Debug, Clone)]
@@ -146,6 +169,33 @@ impl RemoteBrain {
     pub fn step_idx(&self) -> usize {
         self.step_idx
     }
+
+    /// The learned readout, for saving: `(weights, biases, baseline, step_idx)`.
+    pub fn readout(&self) -> (Vec<Vec<f32>>, Vec<f32>, f32, usize) {
+        (self.w.clone(), self.b.clone(), self.baseline, self.step_idx)
+    }
+
+    /// Load a readout back in, if it matches this brain's shape. Returns `false`
+    /// (and changes nothing) on a dimension mismatch.
+    pub fn set_readout(
+        &mut self,
+        w: Vec<Vec<f32>>,
+        b: Vec<f32>,
+        baseline: f32,
+        step_idx: usize,
+    ) -> bool {
+        if w.len() != self.p.n_heads
+            || b.len() != self.p.n_heads
+            || w.iter().any(|row| row.len() != self.p.n_input)
+        {
+            return false;
+        }
+        self.w = w;
+        self.b = b;
+        self.baseline = baseline;
+        self.step_idx = step_idx;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +257,26 @@ mod tests {
             second > 0.3,
             "expected decent learned tracking, got mean reward {second:.3}"
         );
+    }
+
+    #[test]
+    fn readout_roundtrips_and_rejects_mismatch() {
+        let mk = || RemoteBrain::new(
+            BrainParams { n_input: 8, n_heads: 3, ..BrainParams::default() },
+            Box::new(FeedForwardBank::new(8, 8, 40, 0.5)),
+            1,
+        );
+        let mut a = mk();
+        let obs = vec![0.3f32; 8];
+        for _ in 0..20 {
+            a.act(&obs, 0.5);
+        }
+        let (w, b, baseline, step) = a.readout();
+        let mut fresh = mk();
+        assert!(fresh.set_readout(w.clone(), b.clone(), baseline, step));
+        assert_eq!(fresh.readout().0, w);
+        // Wrong head count is rejected, state untouched.
+        assert!(!fresh.set_readout(vec![vec![0.0; 8]], b, baseline, step));
     }
 
     #[test]

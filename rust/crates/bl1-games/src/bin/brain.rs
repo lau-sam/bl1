@@ -15,10 +15,14 @@
 //! brain learns online by reward-modulated node perturbation on whichever
 //! substrate is selected — the same culture that learns Pong and the DOOM arena.
 
+use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 
 use anyhow::Result;
-use bl1_games::{BrainParams, CultureReservoir, FeedForwardBank, RemoteBrain, Substrate};
+use bl1_games::{
+    BrainParams, CultureReservoir, FeedForwardBank, RemoteBrain, RemoteBrainState, Substrate,
+};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -63,6 +67,14 @@ struct Cli {
     /// Exploration floor (kept > 0 so the culture keeps refining, not freezing).
     #[arg(long, default_value_t = 0.08)]
     explore_min: f32,
+
+    /// Load a saved readout from this file at startup (if it exists and matches).
+    #[arg(long, value_name = "PATH")]
+    load: Option<PathBuf>,
+
+    /// Save the readout to this file on graceful shutdown (empty line / EOF).
+    #[arg(long, value_name = "PATH")]
+    save: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -82,6 +94,28 @@ fn main() -> Result<()> {
         ..BrainParams::default()
     };
     let mut brain = RemoteBrain::new(params, substrate, cli.seed);
+    let substrate_tag = if cli.reservoir { "reservoir" } else { "feedforward" };
+
+    // Resume from a saved readout if one exists and matches this culture.
+    if let Some(path) = &cli.load
+        && let Ok(text) = fs::read_to_string(path)
+        && let Ok(st) = serde_yaml::from_str::<RemoteBrainState>(&text)
+    {
+        let compatible =
+            st.substrate == substrate_tag && st.n_input == cli.inputs && st.n_heads == cli.actions;
+        if compatible && brain.set_readout(st.w, st.b, st.baseline, st.step_idx) {
+            eprintln!(
+                "bl1-brain: resumed readout from {} (step {})",
+                path.display(),
+                brain.step_idx()
+            );
+        } else {
+            eprintln!(
+                "bl1-brain: {} is incompatible with this culture — starting fresh",
+                path.display()
+            );
+        }
+    }
 
     // Announce readiness on stderr (stdout carries only action lines).
     eprintln!(
@@ -129,6 +163,48 @@ fn main() -> Result<()> {
         }
         writeln!(out, "{s}")?;
         out.flush()?;
+
+        // Persist periodically so a hard kill (e.g. the TUI stopping the session)
+        // loses at most a little progress, not the whole run.
+        if cli.save.is_some() && brain.step_idx().is_multiple_of(1000) {
+            write_state(&cli, &brain, substrate_tag, false);
+        }
     }
+
+    // Final save on graceful shutdown (empty line / EOF).
+    write_state(&cli, &brain, substrate_tag, true);
     Ok(())
+}
+
+/// Save the brain's readout to `--save` (no-op if unset), so the next session can
+/// resume this culture. `announce` logs the save on stderr.
+fn write_state(cli: &Cli, brain: &RemoteBrain, substrate_tag: &str, announce: bool) {
+    let Some(path) = &cli.save else {
+        return;
+    };
+    let (w, b, baseline, step_idx) = brain.readout();
+    let state = RemoteBrainState {
+        version: 1,
+        substrate: substrate_tag.to_string(),
+        n_input: cli.inputs,
+        n_heads: cli.actions,
+        per_band: if cli.reservoir { 0 } else { cli.per_band },
+        n_neurons: if cli.reservoir { cli.neurons } else { 0 },
+        seed: cli.seed,
+        w,
+        b,
+        baseline,
+        step_idx,
+    };
+    if let Some(dir) = path.parent()
+        && !dir.as_os_str().is_empty()
+    {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(yaml) = serde_yaml::to_string(&state)
+        && fs::write(path, yaml).is_ok()
+        && announce
+    {
+        eprintln!("bl1-brain: saved readout to {} (step {step_idx})", path.display());
+    }
 }
