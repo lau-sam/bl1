@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
-use app::{App, Tab};
+use app::{App, Tab, TrainScreen};
 use clap::Parser;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
@@ -81,54 +81,71 @@ fn handle_key(app: &mut App, code: KeyCode) {
         app.show_help = false;
         return;
     }
-    // Train tab consumes a few keys for the live training controls.
+    // Train tab is a menu → play state machine; keys are scoped to the screen.
     if app.active_tab == Tab::Train {
-        match code {
-            KeyCode::Char(' ') => {
-                app.toggle_training();
-                return;
+        match app.train_screen {
+            TrainScreen::Menu => match code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.menu_move(-1);
+                    return;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.menu_move(1);
+                    return;
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    app.menu_change(-1);
+                    return;
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    app.menu_change(1);
+                    return;
+                }
+                KeyCode::Enter => {
+                    app.start_game();
+                    return;
+                }
+                _ => {}
+            },
+            TrainScreen::Playing => {
+                if matches!(code, KeyCode::Esc | KeyCode::Backspace) {
+                    app.exit_to_menu();
+                    return;
+                }
+                if app.game_choice.is_tui() {
+                    match code {
+                        KeyCode::Char(' ') => {
+                            app.toggle_training();
+                            return;
+                        }
+                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                            app.train_faster();
+                            return;
+                        }
+                        KeyCode::Char('-') => {
+                            app.train_slower();
+                            return;
+                        }
+                        KeyCode::Char('r') => {
+                            app.reset_trainer();
+                            return;
+                        }
+                        KeyCode::Char('w') => {
+                            app.save_brain();
+                            return;
+                        }
+                        KeyCode::Char('o') => {
+                            app.load_brain();
+                            return;
+                        }
+                        _ => {}
+                    }
+                } else if code == KeyCode::Char('r') {
+                    // Relaunch the real-DOOM session with the current settings.
+                    app.launch_real_doom();
+                    return;
+                }
             }
-            KeyCode::Char('r') => {
-                app.reset_trainer();
-                return;
-            }
-            KeyCode::Char('+') | KeyCode::Char('=') => {
-                app.train_faster();
-                return;
-            }
-            KeyCode::Char('-') => {
-                app.train_slower();
-                return;
-            }
-            KeyCode::Char('w') => {
-                app.save_brain();
-                return;
-            }
-            KeyCode::Char('o') => {
-                app.load_brain();
-                return;
-            }
-            KeyCode::Char('m') => {
-                app.toggle_control();
-                return;
-            }
-            KeyCode::Char('b') => {
-                app.toggle_substrate();
-                return;
-            }
-            KeyCode::Char('g') => {
-                app.toggle_game();
-                return;
-            }
-            KeyCode::Char('D') => {
-                app.launch_real_doom();
-                return;
-            }
-            KeyCode::Char('s') => {
-                app.cycle_doom_scenario();
-                return;
-            }
-            _ => {}
         }
     }
     match code {
@@ -213,34 +230,43 @@ fn print_headless(app: &App) {
 
 #[cfg(test)]
 mod render_tests {
-    use super::app::{App, Tab};
+    use super::app::{App, GameChoice, Tab};
     use super::ui;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    /// Render the live Train view for a game after a little learning, to smoke
-    /// out any panic in the per-game canvas / stats / sensory renderers.
-    fn render_train(doom: bool) {
+    fn draw(app: &mut App) {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| ui::draw(f, app)).unwrap();
+    }
+
+    /// Enter a TUI game from the menu, learn a little, and render — smoking out
+    /// any panic in the menu, canvas, stats, or sensory renderers.
+    fn render_playing(game: GameChoice) {
         let mut app = App::new(None);
         app.set_tab(Tab::Train);
-        if doom {
-            app.toggle_game();
-        }
-        app.toggle_training(); // builds the trainer and starts it
+        app.game_choice = game;
+        app.start_game(); // builds the trainer and starts it
         for _ in 0..50 {
             app.train_tick();
         }
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+        draw(&mut app);
+    }
+
+    #[test]
+    fn renders_train_menu() {
+        let mut app = App::new(None);
+        app.set_tab(Tab::Train);
+        draw(&mut app);
     }
 
     #[test]
     fn renders_pong_train_view() {
-        render_train(false);
+        render_playing(GameChoice::PongTui);
     }
 
     #[test]
-    fn renders_doom_train_view() {
-        render_train(true);
+    fn renders_doom_arena_train_view() {
+        render_playing(GameChoice::DoomTui);
     }
 }

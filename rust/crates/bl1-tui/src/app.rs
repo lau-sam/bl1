@@ -25,6 +25,67 @@ pub enum Substrate {
     Reservoir,
 }
 
+/// What the culture plays — chosen on the Train menu before entering the game.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GameChoice {
+    /// Pong in the terminal.
+    PongTui,
+    /// The DOOM aim-and-shoot arena in the terminal.
+    DoomTui,
+    /// Real DOOM in its own window via the ViZDoom bridge (separate process).
+    DoomReal,
+}
+
+impl GameChoice {
+    pub const ALL: [GameChoice; 3] = [
+        GameChoice::PongTui,
+        GameChoice::DoomTui,
+        GameChoice::DoomReal,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GameChoice::PongTui => "Pong (in terminal)",
+            GameChoice::DoomTui => "Doom arena (in terminal)",
+            GameChoice::DoomReal => "Doom — real (ViZDoom window)",
+        }
+    }
+
+    /// A TUI game runs inside the cockpit (vs. the external ViZDoom window).
+    pub fn is_tui(self) -> bool {
+        !matches!(self, GameChoice::DoomReal)
+    }
+}
+
+/// The Train tab is a small state machine: pick a mode on the menu, then play.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TrainScreen {
+    /// Choosing what to play (game + substrate + control + scenario + seed).
+    Menu,
+    /// A game is active (a TUI trainer, or a live ViZDoom session).
+    Playing,
+}
+
+/// Fields on the Train menu, in display order.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MenuField {
+    Game,
+    Substrate,
+    Control,
+    Scenario,
+    Seed,
+}
+
+impl MenuField {
+    pub const ALL: [MenuField; 5] = [
+        MenuField::Game,
+        MenuField::Substrate,
+        MenuField::Control,
+        MenuField::Scenario,
+        MenuField::Seed,
+    ];
+}
+
 /// Top-level views, switchable by clicking the tab bar, `Tab`, or `1`/`2`/`3`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -236,8 +297,14 @@ pub struct App {
     /// Selected ViZDoom scenario (index into [`DOOM_SCENARIOS`]) for the next
     /// real-DOOM launch.
     pub doom_scenario: usize,
-    /// The live real-DOOM session spawned with `D`, if any.
+    /// The live real-DOOM session spawned from the menu, if any.
     pub doom: Option<DoomSession>,
+    /// Train tab state: choosing a mode (menu) vs. playing.
+    pub train_screen: TrainScreen,
+    /// Which game the menu has selected.
+    pub game_choice: GameChoice,
+    /// Highlighted menu field (index into [`MenuField::ALL`]).
+    pub menu_field: usize,
 }
 
 impl App {
@@ -296,6 +363,9 @@ impl App {
             train_game: bl1_games::EnvSpec::Pong,
             doom_scenario: 0,
             doom: None,
+            train_screen: TrainScreen::Menu,
+            game_choice: GameChoice::PongTui,
+            menu_field: 0,
         }
     }
 
@@ -397,69 +467,97 @@ impl App {
         };
     }
 
-    /// Fresh, untrained culture on a new seed.
+    /// Fresh, untrained culture on a new seed (same mode; keeps playing).
     pub fn reset_trainer(&mut self) {
         self.train_seed = self.train_seed.wrapping_add(1);
         self.trainer = Some(self.build_trainer());
-        self.training = false;
-        self.status = format!("Trainer reset (seed {}).", self.train_seed);
+        self.status = format!("Fresh culture (seed {}).", self.train_seed);
     }
 
-    /// Switch the learning substrate (feed-forward bank ↔ recurrent culture).
-    /// Rebuilds a fresh trainer on the same seed.
-    pub fn toggle_substrate(&mut self) {
-        self.train_substrate = match self.train_substrate {
-            Substrate::Feedforward => Substrate::Reservoir,
-            Substrate::Reservoir => Substrate::Feedforward,
-        };
-        self.trainer = Some(self.build_trainer());
-        self.training = false;
-        self.status = match self.train_substrate {
-            Substrate::Feedforward => {
-                "Substrate: feed-forward bank — fast, sharp place code. Retraining from scratch.".to_string()
-            }
-            Substrate::Reservoir => {
-                "Substrate: recurrent culture — the real bl1-sim brain as a fixed reservoir (heavier). Retraining from scratch.".to_string()
-            }
-        };
+    // --- Train menu (choose a mode before entering the game) ---------------
+
+    /// Move the menu cursor (`delta` = ±1), wrapping over the fields.
+    pub fn menu_move(&mut self, delta: i32) {
+        let n = MenuField::ALL.len() as i32;
+        self.menu_field = (((self.menu_field as i32 + delta) % n + n) % n) as usize;
     }
 
-    /// Switch the game the culture is learning (Pong ↔ DOOM aim-and-shoot).
-    /// Rebuilds a fresh trainer on the same seed.
-    pub fn toggle_game(&mut self) {
-        self.train_game = match self.train_game {
-            bl1_games::EnvSpec::Pong => bl1_games::EnvSpec::Doom,
-            bl1_games::EnvSpec::Doom => bl1_games::EnvSpec::Pong,
-        };
-        self.trainer = Some(self.build_trainer());
-        self.training = false;
-        self.status = match self.train_game {
-            bl1_games::EnvSpec::Pong => {
-                "Game: Pong — track the ball with the paddle. Retraining from scratch.".to_string()
+    /// Change the value of the highlighted menu field (`dir` = ±1).
+    pub fn menu_change(&mut self, dir: i32) {
+        match MenuField::ALL[self.menu_field] {
+            MenuField::Game => {
+                let i = GameChoice::ALL
+                    .iter()
+                    .position(|g| *g == self.game_choice)
+                    .unwrap_or(0) as i32;
+                let n = GameChoice::ALL.len() as i32;
+                self.game_choice = GameChoice::ALL[(((i + dir) % n + n) % n) as usize];
             }
-            bl1_games::EnvSpec::Doom => {
-                "Game: DOOM — aim at the enemy and shoot. Retraining from scratch.".to_string()
+            MenuField::Substrate => {
+                self.train_substrate = match self.train_substrate {
+                    Substrate::Feedforward => Substrate::Reservoir,
+                    Substrate::Reservoir => Substrate::Feedforward,
+                };
             }
-        };
+            MenuField::Control => {
+                if self.game_choice.is_tui() {
+                    self.train_control = match self.train_control {
+                        bl1_games::PaddleControl::Direct => bl1_games::PaddleControl::SmoothPursuit,
+                        bl1_games::PaddleControl::SmoothPursuit => bl1_games::PaddleControl::Direct,
+                    };
+                } else {
+                    self.status = "Control is N/A for real Doom (the culture aims via ViZDoom).".to_string();
+                }
+            }
+            MenuField::Scenario => {
+                if self.game_choice == GameChoice::DoomReal {
+                    let n = DOOM_SCENARIOS.len() as i32;
+                    self.doom_scenario = (((self.doom_scenario as i32 + dir) % n + n) % n) as usize;
+                } else {
+                    self.status = "Scenario applies only to real Doom (ViZDoom).".to_string();
+                }
+            }
+            MenuField::Seed => {
+                self.train_seed = (self.train_seed as i64 + dir as i64).max(0) as u64;
+            }
+        }
     }
 
-    /// Switch between direct and smooth-pursuit paddle control. The mode is
-    /// baked into the agent, so this rebuilds a fresh trainer on the same seed.
-    pub fn toggle_control(&mut self) {
-        self.train_control = match self.train_control {
-            bl1_games::PaddleControl::Direct => bl1_games::PaddleControl::SmoothPursuit,
-            bl1_games::PaddleControl::SmoothPursuit => bl1_games::PaddleControl::Direct,
-        };
-        self.trainer = Some(self.build_trainer());
+    /// Enter the selected game: build the TUI trainer and start it, or launch the
+    /// real-DOOM (ViZDoom) session. Controls are then scoped to that mode.
+    pub fn start_game(&mut self) {
+        match self.game_choice {
+            GameChoice::PongTui | GameChoice::DoomTui => {
+                self.train_game = if self.game_choice == GameChoice::DoomTui {
+                    bl1_games::EnvSpec::Doom
+                } else {
+                    bl1_games::EnvSpec::Pong
+                };
+                self.trainer = Some(self.build_trainer());
+                self.training = true;
+                self.train_screen = TrainScreen::Playing;
+                self.status = format!(
+                    "Playing {} — Space pauses, Esc returns to the menu.",
+                    self.game_choice.label()
+                );
+            }
+            GameChoice::DoomReal => {
+                // launch_real_doom sets self.doom (+ status) or reports what's missing.
+                self.launch_real_doom();
+                if self.doom.is_some() {
+                    self.train_screen = TrainScreen::Playing;
+                }
+            }
+        }
+    }
+
+    /// Leave the running game and return to the mode menu (stops any session).
+    pub fn exit_to_menu(&mut self) {
         self.training = false;
-        self.status = match self.train_control {
-            bl1_games::PaddleControl::Direct => {
-                "Paddle control: direct — the culture's output is the paddle. Retraining from scratch.".to_string()
-            }
-            bl1_games::PaddleControl::SmoothPursuit => {
-                "Paddle control: smooth-pursuit — inertial paddle, the culture must lead the ball. Retraining from scratch.".to_string()
-            }
-        };
+        self.stop_doom();
+        self.trainer = None;
+        self.train_screen = TrainScreen::Menu;
+        self.status = "Choose what the culture plays, then press Enter.".to_string();
     }
 
     /// Path of the shareable brain file, per game (copy it to hand off a trained
@@ -615,15 +713,6 @@ impl App {
             }
             Err(e) => self.status = format!("Failed to launch the DOOM bridge: {e}"),
         }
-    }
-
-    /// Cycle the ViZDoom scenario used for the next launch.
-    pub fn cycle_doom_scenario(&mut self) {
-        self.doom_scenario = (self.doom_scenario + 1) % DOOM_SCENARIOS.len();
-        self.status = format!(
-            "Real-DOOM scenario: {} (applies to the next launch — press D).",
-            DOOM_SCENARIOS[self.doom_scenario]
-        );
     }
 
     /// Whether a real-DOOM session process is currently live.

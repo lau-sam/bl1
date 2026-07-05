@@ -16,7 +16,10 @@ use ratatui::widgets::{
 
 use bl1_games::{DoomState, EnvView, PongState};
 
-use crate::app::{App, DoomSession, Focus, RunResult, Tab, substrate_label};
+use crate::app::{
+    App, DOOM_SCENARIOS, DoomSession, Focus, GameChoice, MenuField, RunResult, Tab, TrainScreen,
+    substrate_label,
+};
 
 const CYAN: Color = Color::Cyan;
 const BG_BAR: Color = Color::Rgb(30, 30, 40);
@@ -604,39 +607,28 @@ fn truncate(s: &str, max: usize) -> String {
 // ---------------------------------------------------------------------------
 
 fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
-    // A live real-DOOM session (spawned with D) is a *separate* brain/process;
-    // show its own learning signal on top so it's never confused with the local
-    // arena training below.
-    let area = if let Some(session) = &app.doom {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(9), Constraint::Min(0)])
-            .split(area);
-        draw_doom_monitor(frame, session, rows[0]);
-        rows[1]
-    } else {
-        area
-    };
+    // The Train tab is a menu → play state machine.
+    if app.train_screen == TrainScreen::Menu {
+        draw_train_menu(frame, app, area);
+        return;
+    }
 
+    // Real DOOM plays in its own window; the cockpit shows the session monitor.
+    if app.game_choice == GameChoice::DoomReal {
+        draw_doom_playing(frame, app, area);
+        return;
+    }
+
+    // A TUI game (Pong / Doom arena) plays live inside the cockpit.
     let Some(trainer) = app.trainer.as_deref() else {
-        let p = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Live training — a cultured network learns to play a game.",
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Press Space to start; g switches game (Pong ↔ DOOM), b switches",
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  starting…",
                 Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(Span::styled(
-                "  substrate. Watch the hit-rate curve climb as the culture learns.",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ])
-        .block(Block::default().borders(Borders::ALL).title(" Train "));
-        frame.render_widget(p, area);
+            )))
+            .block(Block::default().borders(Borders::ALL).title(" Train ")),
+            area,
+        );
         return;
     };
 
@@ -668,6 +660,123 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
     draw_train_gauges(frame, trainer, bottom[0]);
     draw_sensory(frame, trainer, bottom[1]);
     draw_train_stats(frame, trainer, app, bottom[2]);
+}
+
+/// The Train menu: pick what the culture plays before entering the game.
+fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Train — choose a mode ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let control_val = if app.game_choice.is_tui() {
+        app.train_control.label()
+    } else {
+        "— (real Doom aims via ViZDoom)"
+    };
+    let scenario_val = if app.game_choice == GameChoice::DoomReal {
+        DOOM_SCENARIOS[app.doom_scenario]
+    } else {
+        "— (real Doom only)"
+    };
+    let substrate_val = substrate_label(app.train_substrate);
+    let seed_val = app.train_seed.to_string();
+
+    let rows: [(MenuField, &str, String, bool); 5] = [
+        (MenuField::Game, "Game", app.game_choice.label().to_string(), true),
+        (MenuField::Substrate, "Substrate", substrate_val.to_string(), true),
+        (
+            MenuField::Control,
+            "Control",
+            control_val.to_string(),
+            app.game_choice.is_tui(),
+        ),
+        (
+            MenuField::Scenario,
+            "Scenario",
+            scenario_val.to_string(),
+            app.game_choice == GameChoice::DoomReal,
+        ),
+        (MenuField::Seed, "Seed", seed_val, true),
+    ];
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "  What should the culture play?",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  ↑/↓ field · ←/→ change · Enter start",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+    ];
+    for (i, (_f, label, value, active)) in rows.iter().enumerate() {
+        let selected = i == app.menu_field;
+        let marker = if selected { "› " } else { "  " };
+        let label_style = if selected {
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let value_style = if !active {
+            Style::default().fg(Color::DarkGray)
+        } else if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {marker}"), label_style),
+            Span::styled(format!("{label:<11}"), label_style),
+            Span::styled(value.clone(), value_style),
+        ]));
+    }
+    lines.push(Line::from(""));
+    let blurb = match app.game_choice {
+        GameChoice::PongTui => "Pong: the culture tracks the ball with a paddle, rendered here.",
+        GameChoice::DoomTui => "Doom arena: aim-and-shoot toy rendered here in the terminal.",
+        GameChoice::DoomReal => {
+            "Real Doom: opens a ViZDoom window; the culture aims and shoots. Needs `pip install vizdoom numpy`."
+        }
+    };
+    lines.push(Line::from(Span::styled(
+        format!("  {blurb}"),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The Playing view for real DOOM: the game is in its own window, so the cockpit
+/// shows the session monitor + how to control it.
+fn draw_doom_playing(frame: &mut Frame, app: &App, area: Rect) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
+        .split(area);
+    match &app.doom {
+        Some(session) => draw_doom_monitor(frame, session, rows[0]),
+        None => frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  real DOOM session ended.",
+                Style::default().fg(Color::DarkGray),
+            )))
+            .block(Block::default().borders(Borders::ALL).title(" real DOOM ")),
+            rows[0],
+        ),
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "  Doom is in its own window · r relaunch · Esc back to menu",
+            Style::default().fg(Color::DarkGray),
+        )))
+        .block(Block::default().borders(Borders::ALL)),
+        rows[1],
+    );
 }
 
 /// The real-DOOM session monitor: the live learning signal of the *separate*
@@ -737,7 +846,7 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "separate process — scenario s · substrate b · seed r apply to the NEXT launch (D)",
+            "separate process — Esc back to the menu to change scenario / substrate / seed",
             Style::default().fg(Color::DarkGray),
         ))),
         rows[2],
@@ -1409,20 +1518,32 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("?", "help"),
             ("q", "quit"),
         ],
-        Tab::Train => vec![
-            ("Space", "play/pause"),
-            ("r", "reset"),
-            ("+/-", "speed"),
-            ("g", "game"),
-            ("b", "substrate"),
-            ("m", "control mode"),
-            ("D", "real DOOM"),
-            ("s", "scenario"),
-            ("w/o", "save/load brain"),
-            ("Tab", "view"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
+        Tab::Train => match app.train_screen {
+            TrainScreen::Menu => vec![
+                ("↑/↓", "field"),
+                ("←/→", "change"),
+                ("Enter", "start"),
+                ("Tab", "view"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            TrainScreen::Playing if app.game_choice.is_tui() => vec![
+                ("Space", "play/pause"),
+                ("+/-", "speed"),
+                ("r", "fresh culture"),
+                ("w/o", "save/load brain"),
+                ("Esc", "menu"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            TrainScreen::Playing => vec![
+                ("r", "relaunch"),
+                ("Esc", "menu"),
+                ("Tab", "view"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+        },
         Tab::Science => vec![
             ("2", "simulate"),
             ("Tab", "view"),
@@ -1507,33 +1628,28 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row("wheel over raster", "scroll neuron rows"));
         }
         Tab::Train => {
-            lines.push(help_head("Train"));
-            lines.push(help_row("Space", "start / pause live training"));
-            lines.push(help_row("r", "reset to a fresh culture (new seed)"));
-            lines.push(help_row("+ / -", "faster / slower (steps per frame)"));
+            lines.push(help_head("Train — menu (choose a mode, then Enter)"));
+            lines.push(help_row("↑ / ↓", "move between fields"));
             lines.push(help_row(
-                "g",
-                "game: Pong (track the ball) ↔ DOOM (aim at the enemy and shoot)",
+                "← / →",
+                "change: Game (Pong / Doom arena / real Doom), Substrate (feed-forward ↔ recurrent culture), Control, Scenario, Seed",
             ));
+            lines.push(help_row("Enter", "enter the selected game"));
+            lines.push(Line::from(""));
+            lines.push(help_head("Train — while playing"));
+            lines.push(help_row("Esc", "return to the mode menu (stops the session)"));
             lines.push(help_row(
-                "b",
-                "substrate: feed-forward bank ↔ recurrent culture (the real bl1-sim brain, heavier)",
+                "Space / + / -",
+                "TUI games: play-pause, faster, slower",
             ));
-            lines.push(help_row(
-                "m",
-                "paddle control: direct (teleport) ↔ smooth-pursuit (inertial — must lead the ball)",
-            ));
-            lines.push(help_row(
-                "D",
-                "launch real DOOM (ViZDoom) driven by the culture — a separate Doom window; its live kills/episode show in the monitor on top. Needs `pip install vizdoom numpy`",
-            ));
-            lines.push(help_row(
-                "s",
-                "cycle the real-DOOM scenario (defend_the_center / basic / defend_the_line) for the next launch",
-            ));
+            lines.push(help_row("r", "TUI: fresh culture (new seed) · real Doom: relaunch"));
             lines.push(help_row(
                 "w / o",
-                "save / load the trained brain (brains/<game>_brain.yaml — share it!)",
+                "TUI: save / load the trained brain (brains/<game>_brain.yaml — share it!)",
+            ));
+            lines.push(help_row(
+                "real Doom",
+                "opens a ViZDoom window (separate process); the monitor shows its live kills/episode. Needs `pip install vizdoom numpy`",
             ));
             lines.push(Line::from(""));
             lines.push(help_head("Reading the panels"));

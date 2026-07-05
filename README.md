@@ -447,15 +447,16 @@ The UI is a mouse- and keyboard-driven cockpit with five views (**Dashboard**, *
   `Enter`/`r` or the **Run** button starts a preview. The simulation runs on a background
   thread — the UI stays responsive with a live spinner while it computes. The raster scrolls
   with the mouse wheel.
-- **Train:** watch the culture **learn a game live** — `Space` starts/pauses, `+`/`-` change speed,
-  `r` resets to a fresh culture. `g` switches the **game** (Pong ↔ DOOM aim-and-shoot); `b` switches
-  the **substrate** (feed-forward bank ↔ the full recurrent culture as a reservoir); `m` switches
-  **control** (direct teleport ↔ inertial smooth pursuit, where the culture must *lead* the target);
-  `w`/`o` **save/load** the trained brain to a shareable file (`brains/<game>_brain.yaml`). A Canvas
-  renders the game in real time — Pong's ball + tracking paddle, or DOOM's first-person arena where a
-  red enemy swells as it nears and the crosshair turns green on target — next to a live hit-rate
-  learning curve (Chart), a per-event hit/miss timeline, skill gauges, and the culture's sensory bump
-  (Sparkline). Built from ratatui's Canvas / Chart / Gauge / Sparkline widgets.
+- **Train:** a **menu → play** flow. First pick a mode (`↑`/`↓` field, `←`/`→` change, `Enter` to
+  start): **game** (Pong · Doom arena · real Doom via ViZDoom), **substrate** (feed-forward bank ↔
+  the full recurrent culture as a reservoir), **control** (direct ↔ inertial smooth pursuit),
+  **scenario** (real Doom), and **seed**. Then it plays — controls are scoped to that mode: `Space`
+  play/pause, `+`/`-` speed, `r` fresh culture, `w`/`o` save/load the shareable brain
+  (`brains/<game>_brain.yaml`), `Esc` back to the menu. A Canvas renders the TUI games in real time —
+  Pong's ball + tracking paddle, or the DOOM arena where a red enemy swells as it nears and the
+  crosshair turns green on target — next to a live hit-rate learning curve (Chart), a per-event
+  hit/miss timeline, skill gauges, and the culture's sensory bump (Sparkline). Built from ratatui's
+  Canvas / Chart / Gauge / Sparkline widgets.
 - **Science:** the biology metrics of the last run in plain language — firing rate, network bursts
   (vs Wagenaar 2006), branching ratio σ and avalanche exponent (criticality, Beggs & Plenz 2003) —
   each with a one-line explanation and a "matches living cortex?" verdict.
@@ -560,12 +561,13 @@ python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 80
 #   … --reservoir --neurons 800   to run the recurrent culture as the brain
 ```
 
-Or launch it straight from the cockpit: open the **Train** tab (`3`) and press **`D`** — the TUI
+Or launch it straight from the cockpit: open the **Train** tab (`3`), pick **Doom — real (ViZDoom)**
+in the menu (set the substrate, scenario, and seed there too), and press **`Enter`**. The TUI
 pre-flights the prerequisites (brain built, ViZDoom installed), tells you exactly what's missing if
-not, and otherwise spawns the bridge so real Doom opens in its own window. It carries over the current
-substrate, seed, and the scenario picked with **`s`**, and streams the session's live kills/episode
-into a monitor panel at the top of the Train view. Note the Doom session is a **separate process/brain**
-— the Train gauges below it are the local arena, and config changes apply to the *next* launch.
+not, otherwise spawns the bridge so real Doom opens in its own window, and streams the session's live
+kills/episode into a monitor panel. It's a **separate process/brain** — `Esc` returns to the menu (and
+stops the session), and menu changes apply to the *next* launch. `r` relaunches with the current
+settings.
 
 This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real
 Doom engine, over the same node-perturbation rule that plays Pong. It **works** — on
