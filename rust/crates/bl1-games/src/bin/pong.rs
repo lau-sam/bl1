@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use bl1_games::{
-    AgentParams, ClosedLoop, Event, LoopConfig, PaddleControl, PursuitAgent, PursuitParams,
-    ReservoirAgent, ReservoirParams, RstdpAgent, RunLog,
+    AgentParams, ClosedLoop, EnvSpec, Event, Learner, LoopConfig, PaddleControl, RstdpAgent, RunLog,
+    SubstrateSpec,
 };
 use bl1_sim::Config;
 use clap::Parser;
@@ -81,12 +81,14 @@ fn main() -> Result<()> {
             cli.steps,
             cli.seed
         );
-        let params = ReservoirParams {
-            n_neurons: cli.neurons,
+        let mut agent = Learner::build(
+            EnvSpec::Pong,
+            SubstrateSpec::Reservoir {
+                n_neurons: cli.neurons,
+            },
             control,
-            ..ReservoirParams::default()
-        };
-        let mut agent = ReservoirAgent::new(params, cli.seed);
+            cli.seed,
+        );
         agent.run(cli.steps)
     } else if cli.pursuit {
         println!(
@@ -95,11 +97,12 @@ fn main() -> Result<()> {
             cli.steps,
             cli.seed
         );
-        let params = PursuitParams {
+        let mut agent = Learner::build(
+            EnvSpec::Pong,
+            SubstrateSpec::FeedForward { per_band: 32 },
             control,
-            ..PursuitParams::default()
-        };
-        let mut agent = PursuitAgent::new(params, cli.seed);
+            cli.seed,
+        );
         agent.run(cli.steps)
     } else if cli.rstdp {
         println!(

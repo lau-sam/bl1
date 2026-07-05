@@ -196,3 +196,25 @@ fn print_headless(app: &App) {
         println!("  avalanche size exp: {:.3}", r.avalanche_size_exp);
     }
 }
+
+#[cfg(test)]
+mod render_tests {
+    use super::app::{App, Tab};
+    use super::ui;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render the live Train view after a little learning, to smoke out any panic
+    /// in the canvas / stats / sensory renderers.
+    #[test]
+    fn renders_pong_train_view() {
+        let mut app = App::new(None);
+        app.set_tab(Tab::Train);
+        app.toggle_training(); // builds the trainer and starts it
+        for _ in 0..50 {
+            app.train_tick();
+        }
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
+    }
+}

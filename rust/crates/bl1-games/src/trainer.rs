@@ -1,24 +1,20 @@
-//! A common interface over the learnable Pong agents so a live UI can drive
-//! either substrate — the feed-forward bank ([`crate::pursuit::PursuitAgent`])
-//! or the recurrent culture ([`crate::reservoir::ReservoirAgent`]) — through one
-//! handle. Both learn a linear readout by reward-modulated node perturbation;
-//! they differ only in what produces the sensory feature vector.
+//! The object-safe surface a live UI needs to drive and inspect a [`Learner`],
+//! plus [`load_trainer`] to rebuild the right learner from a shared brain file.
+//! There is one learner type now — the substrate and game are swappable *inside*
+//! it — so this is a thin observable façade rather than a polymorphism seam.
 
-use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
 
-use crate::pong::{Event, PongState};
-use crate::pursuit::{Brain, PaddleControl, PursuitAgent};
-use crate::reservoir::ReservoirAgent;
+use crate::env::{EnvView, GameKind};
+use crate::learner::{Learner, PaddleControl};
+use crate::pong::Event;
 
-/// The observable, steppable surface a live trainer view needs. Inherent
-/// methods on each agent satisfy these (method resolution prefers them, so the
-/// forwarding bodies below don't recurse).
+/// The observable, steppable surface a live trainer view needs.
 pub trait Trainer {
     fn step(&mut self) -> Event;
-    fn game(&self) -> &PongState;
+    fn view(&self) -> EnvView<'_>;
     fn features(&self) -> &[f32];
     fn step_idx(&self) -> usize;
     fn hits(&self) -> u32;
@@ -33,70 +29,63 @@ pub trait Trainer {
     fn save(&self, path: &Path) -> Result<()>;
     /// Short label for the substrate driving the learning (for the UI).
     fn substrate(&self) -> &'static str;
+    /// Which game the learner is playing (chooses the UI renderer).
+    fn game_kind(&self) -> GameKind;
 }
 
-macro_rules! impl_trainer {
-    ($ty:ty, $substrate:expr) => {
-        impl Trainer for $ty {
-            fn step(&mut self) -> Event {
-                <$ty>::step(self)
-            }
-            fn game(&self) -> &PongState {
-                <$ty>::game(self)
-            }
-            fn features(&self) -> &[f32] {
-                <$ty>::features(self)
-            }
-            fn step_idx(&self) -> usize {
-                <$ty>::step_idx(self)
-            }
-            fn hits(&self) -> u32 {
-                <$ty>::hits(self)
-            }
-            fn misses(&self) -> u32 {
-                <$ty>::misses(self)
-            }
-            fn last_target(&self) -> f32 {
-                <$ty>::last_target(self)
-            }
-            fn sigma(&self) -> f32 {
-                <$ty>::sigma(self)
-            }
-            fn control(&self) -> PaddleControl {
-                <$ty>::control(self)
-            }
-            fn hit_rate(&self) -> f32 {
-                <$ty>::hit_rate(self)
-            }
-            fn hit_rate_curve(&self, block: usize) -> Vec<f32> {
-                <$ty>::hit_rate_curve(self, block)
-            }
-            fn recent_outcomes(&self, n: usize) -> Vec<bool> {
-                <$ty>::recent_outcomes(self, n)
-            }
-            fn recent_hit_rate(&self, n: usize) -> f32 {
-                <$ty>::recent_hit_rate(self, n)
-            }
-            fn save(&self, path: &Path) -> Result<()> {
-                <$ty>::save(self, path)
-            }
-            fn substrate(&self) -> &'static str {
-                $substrate
-            }
-        }
-    };
-}
-
-impl_trainer!(PursuitAgent, "feed-forward bank");
-impl_trainer!(ReservoirAgent, "recurrent culture");
-
-/// Load a shared brain file and rebuild the matching agent, dispatching on the
-/// persisted `mode` tag (feed-forward pursuit vs. recurrent-culture reservoir).
-pub fn load_trainer(path: &Path) -> Result<Box<dyn Trainer>> {
-    let brain: Brain = serde_yaml::from_str(&fs::read_to_string(path)?)?;
-    if brain.mode.contains("reservoir") {
-        Ok(Box::new(ReservoirAgent::from_brain(&brain)))
-    } else {
-        Ok(Box::new(PursuitAgent::from_brain(&brain)))
+impl Trainer for Learner {
+    fn step(&mut self) -> Event {
+        Learner::step(self)
     }
+    fn view(&self) -> EnvView<'_> {
+        Learner::view(self)
+    }
+    fn features(&self) -> &[f32] {
+        Learner::features(self)
+    }
+    fn step_idx(&self) -> usize {
+        Learner::step_idx(self)
+    }
+    fn hits(&self) -> u32 {
+        Learner::hits(self)
+    }
+    fn misses(&self) -> u32 {
+        Learner::misses(self)
+    }
+    fn last_target(&self) -> f32 {
+        Learner::last_target(self)
+    }
+    fn sigma(&self) -> f32 {
+        Learner::sigma(self)
+    }
+    fn control(&self) -> PaddleControl {
+        Learner::control(self)
+    }
+    fn hit_rate(&self) -> f32 {
+        Learner::hit_rate(self)
+    }
+    fn hit_rate_curve(&self, block: usize) -> Vec<f32> {
+        Learner::hit_rate_curve(self, block)
+    }
+    fn recent_outcomes(&self, n: usize) -> Vec<bool> {
+        Learner::recent_outcomes(self, n)
+    }
+    fn recent_hit_rate(&self, n: usize) -> f32 {
+        Learner::recent_hit_rate(self, n)
+    }
+    fn save(&self, path: &Path) -> Result<()> {
+        Learner::save(self, path)
+    }
+    fn substrate(&self) -> &'static str {
+        Learner::substrate_label(self)
+    }
+    fn game_kind(&self) -> GameKind {
+        Learner::game_kind(self)
+    }
+}
+
+/// Load a shared brain file and rebuild the matching learner (game + substrate +
+/// control are all recovered from the persisted `mode` tag).
+pub fn load_trainer(path: &Path) -> Result<Box<dyn Trainer>> {
+    Ok(Box::new(Learner::load(path)?))
 }

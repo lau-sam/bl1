@@ -220,24 +220,19 @@ impl App {
         }
     }
 
-    /// Build a trainer on the current seed with the current substrate + control.
+    /// Build a trainer on the current seed with the current substrate + control,
+    /// both orthogonal choices behind one generic `Learner`.
     fn build_trainer(&self) -> Box<dyn bl1_games::Trainer> {
-        match self.train_substrate {
-            Substrate::Feedforward => Box::new(bl1_games::PursuitAgent::new(
-                bl1_games::PursuitParams {
-                    control: self.train_control,
-                    ..bl1_games::PursuitParams::default()
-                },
-                self.train_seed,
-            )),
-            Substrate::Reservoir => Box::new(bl1_games::ReservoirAgent::new(
-                bl1_games::ReservoirParams {
-                    control: self.train_control,
-                    ..bl1_games::ReservoirParams::default()
-                },
-                self.train_seed,
-            )),
-        }
+        let substrate = match self.train_substrate {
+            Substrate::Feedforward => bl1_games::SubstrateSpec::FeedForward { per_band: 32 },
+            Substrate::Reservoir => bl1_games::SubstrateSpec::Reservoir { n_neurons: 400 },
+        };
+        Box::new(bl1_games::Learner::build(
+            bl1_games::EnvSpec::Pong,
+            substrate,
+            self.train_control,
+            self.train_seed,
+        ))
     }
 
     // --- selection ---------------------------------------------------------

@@ -14,6 +14,8 @@ use ratatui::widgets::{
     Paragraph, Sparkline, Wrap,
 };
 
+use bl1_games::{EnvView, PongState};
+
 use crate::app::{App, Focus, RunResult, Tab};
 
 const CYAN: Color = Color::Cyan;
@@ -636,7 +638,7 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(outer[0]);
-    draw_pong_canvas(frame, trainer, top[0], app.training);
+    draw_game_canvas(frame, trainer, top[0], app.training);
     draw_learning_chart(frame, trainer, top[1]);
 
     draw_outcomes(frame, trainer, outer[1]);
@@ -687,13 +689,14 @@ fn draw_outcomes(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-fn draw_pong_canvas(
-    frame: &mut Frame,
-    trainer: &dyn bl1_games::Trainer,
-    area: Rect,
-    playing: bool,
-) {
-    let g = trainer.game();
+/// Dispatch to the right scene renderer for whichever game the culture plays.
+fn draw_game_canvas(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect, playing: bool) {
+    match trainer.view() {
+        EnvView::Pong(s) => draw_pong_canvas(frame, s, area, playing),
+    }
+}
+
+fn draw_pong_canvas(frame: &mut Frame, g: &PongState, area: Rect, playing: bool) {
     let (bx, by) = (g.ball_x as f64, g.ball_y as f64);
     let py = g.paddle_y as f64;
 
@@ -896,6 +899,7 @@ fn draw_train_gauges(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: 
 
 fn draw_sensory(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect) {
     let block = panel(" Sensory input — ball-Y place code ", false);
+    let legend = "◄ ball low    the peak = ball height the culture senses    ball high ►";
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -905,7 +909,7 @@ fn draw_sensory(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect)
         .split(inner);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "◄ ball low    the peak = ball height the culture senses    ball high ►",
+            legend,
             Style::default().fg(Color::DarkGray),
         ))),
         rows[0],
@@ -936,7 +940,9 @@ fn draw_sensory(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, area: Rect)
 }
 
 fn draw_train_stats(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, app: &App, area: Rect) {
-    let g = trainer.game();
+    let EnvView::Pong(g) = trainer.view();
+    let (sense_label, sense_val, act_label, act_val) =
+        ("ball y", g.ball_y, "paddle → target", g.paddle_y);
     let lines = vec![
         stat("step", format!("{}", trainer.step_idx())),
         stat(
@@ -947,10 +953,10 @@ fn draw_train_stats(frame: &mut Frame, trainer: &dyn bl1_games::Trainer, app: &A
         stat("substrate", trainer.substrate().to_string()),
         stat("control", trainer.control().label().to_string()),
         stat("seed", format!("{}", app.train_seed)),
-        stat("ball y", format!("{:.2}", g.ball_y)),
+        stat(sense_label, format!("{sense_val:.2}")),
         stat(
-            "paddle → target",
-            format!("{:.2} → {:.2}", g.paddle_y, trainer.last_target()),
+            act_label,
+            format!("{:.2} → {:.2}", act_val, trainer.last_target()),
         ),
     ];
     frame.render_widget(Paragraph::new(lines).block(panel(" State ", false)), area);

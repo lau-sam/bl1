@@ -6,6 +6,9 @@
 //! events so the controller can deliver distinct feedback (Kagan 2022).
 
 use rand::Rng;
+use rand_pcg::Pcg64;
+
+use crate::env::{EnvView, Environment, GameKind};
 
 /// Paddle action decoded from the culture's motor region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +136,59 @@ impl Pong {
         state.ball_y = 0.5;
         state.ball_vx = self.ball_speed * angle.cos();
         state.ball_vy = self.ball_speed * angle.sin();
+    }
+}
+
+/// Pong as an [`Environment`]: the culture's actuator *is* the paddle. The ball
+/// height is what it senses; the reward is dense tracking of the ball by the
+/// paddle, and each ball reaching the plane is one hit/miss outcome.
+pub struct PongEnv {
+    pong: Pong,
+    state: PongState,
+}
+
+impl PongEnv {
+    /// A fresh Pong environment at the given ball speed (seed drives the launch).
+    pub fn new(ball_speed: f32, rng: &mut Pcg64) -> Self {
+        let pong = Pong {
+            ball_speed,
+            ..Pong::default()
+        };
+        let state = pong.reset(rng);
+        Self { pong, state }
+    }
+}
+
+impl Environment for PongEnv {
+    fn sensory_position(&self) -> f32 {
+        self.state.ball_y
+    }
+
+    fn actuator_position(&self) -> f32 {
+        self.state.paddle_y
+    }
+
+    fn step(&mut self, pos: f32, rng: &mut Pcg64) -> (f32, Event) {
+        // Dense tracking reward on the actual paddle position vs. the current ball
+        // height (computed before the ball advances), then step with the paddle
+        // driven directly to `pos` (the game itself never moves the paddle).
+        let reward = 1.0 - 2.0 * (pos - self.state.ball_y).abs();
+        self.state.paddle_y = pos;
+        let (next, event) = self.pong.step(&self.state, Action::Stay, rng);
+        self.state = next;
+        (reward, event)
+    }
+
+    fn view(&self) -> EnvView<'_> {
+        EnvView::Pong(&self.state)
+    }
+
+    fn kind(&self) -> GameKind {
+        GameKind::Pong
+    }
+
+    fn reset(&mut self, rng: &mut Pcg64) {
+        self.state = self.pong.reset(rng);
     }
 }
 
