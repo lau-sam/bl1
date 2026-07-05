@@ -543,27 +543,30 @@ the **same simulated culture** that learns Pong also learns to aim, with zero ch
 The built-in arena is a teaching toy. To put the culture in the **real Doom engine**, BL-1 ships a
 brain server and a [ViZDoom](https://vizdoom.cz) bridge. The culture stays the brain — `bl1-brain`
 runs the spiking substrate + a multi-head reward-modulated readout and speaks a tiny stdio protocol
-(`<reward> <obs…>` in, `<action…>` out) — and a Python script drives a real Doom scenario, encodes
-each rendered frame into a coarse retina the culture senses, computes reward from the game variables
-(kills up, damage down), and maps the returned actions onto Doom buttons.
+(`<reward> <obs…>` in, `<action…>` out) — and a Python script drives a real Doom scenario, reads
+ViZDoom's labels buffer into an enemy-bearing place code the culture senses, shapes a dense reward
+(centre the nearest enemy + fire on target + kill bonus − damage), and maps the returned actions onto
+Doom buttons.
 
 ```text
-  ViZDoom (real Doom)  ──frame→retina[N], reward──▶  bl1-brain  ──actions[M]──▶  turn / shoot
-                                                     (spiking culture, learns online)
+  ViZDoom (real Doom)  ──enemy-bearing retina[N], reward──▶  bl1-brain  ──turn / shoot──▶
+                                                             (spiking culture, learns online)
 ```
 
 ```bash
 cd rust && cargo build --release -p bl1-games        # build the brain server
 pip install vizdoom numpy                            # ViZDoom ships scenarios + a free WAD
-python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 50
+python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 80
 #   … --reservoir --neurons 800   to run the recurrent culture as the brain
 ```
 
 This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real
-Doom engine, over the same node-perturbation rule that plays Pong. It targets aim-and-shoot scenarios
-(`defend_the_center`, `basic`) that fit the culture's coarse sensory/motor map — not a full-campaign
-agent. The IPC learning loop is verified end-to-end; ViZDoom itself needs a display (or headless SDL)
-and is installed separately.
+Doom engine, over the same node-perturbation rule that plays Pong. It **works** — on
+`defend_the_center` the culture climbs from ~1 to ~4 kills per episode over ~80 episodes (verified
+headless). It targets aim-and-shoot scenarios (`defend_the_center`, `basic`) that fit the culture's
+coarse sensory/motor map — not a full-campaign agent. Tune learning from the client via
+`bl1-brain`'s `--learning-rate`, `--explore-decay`, and `--explore-min` flags. ViZDoom needs a display
+(or headless SDL) and is installed separately.
 
 ## License
 

@@ -58,22 +58,48 @@ def find_brain_binary(explicit: str | None) -> Path:
     )
 
 
-def encode_retina(frame: np.ndarray, n_bins: int) -> np.ndarray:
-    """Turn a grayscale Doom frame into an ``n_bins`` horizontal bearing code.
+def enemy_retina(state, n_bins: int, screen_w: int):
+    """Encode enemy bearings from ViZDoom's labels buffer into a place code.
 
-    Enemies and muzzle contrast stand out against the arena; we take, per screen
-    column band, how far its brightness deviates from the frame's median (a crude
-    saliency), giving a bump wherever something interesting sits in that bearing.
-    Coarse on purpose — the culture reads a place code, not pixels.
+    The labels buffer gives ground-truth on-screen objects, so we get a clean
+    bearing for each enemy instead of guessing from pixels — the culture reads
+    the same kind of Gaussian-bump place code it learns on in Pong and the arena.
+    Returns ``(obs[n_bins], nearest_bearing)`` where ``nearest_bearing`` is the
+    screen-x in ``[0, 1]`` of the largest (closest) enemy, or ``None`` if none is
+    visible. Bumps are weighted by apparent size, so closer enemies dominate.
     """
-    if frame.ndim == 3:  # (C, H, W) or (H, W, C) → luminance
+    obs = np.zeros(n_bins, dtype=np.float32)
+    labels = getattr(state, "labels", None) or []
+    idx = np.arange(n_bins, dtype=np.float32)
+    best = None  # (bearing, size)
+    for lab in labels:
+        name = getattr(lab, "object_name", "")
+        if name in ("DoomPlayer", ""):  # skip the agent itself
+            continue
+        cx = (lab.x + lab.width / 2.0) / max(1, screen_w)
+        size = float(lab.width * lab.height)
+        center = min(max(cx, 0.0), 1.0) * (n_bins - 1)
+        obs += size * np.exp(-((idx - center) ** 2) / (2.0 * 1.5 * 1.5))
+        if best is None or size > best[1]:
+            best = (cx, size)
+    m = obs.max()
+    if m > 1e-6:
+        obs /= m
+    return obs, (best[0] if best is not None else None)
+
+
+def encode_retina_pixels(frame: np.ndarray, n_bins: int) -> np.ndarray:
+    """Fallback bearing code from raw pixels (used only if labels are off).
+
+    Per screen-column band, how far its brightness deviates from the frame's
+    median — a crude saliency bump wherever something stands out.
+    """
+    if frame.ndim == 3:
         frame = frame.mean(axis=0) if frame.shape[0] <= 4 else frame.mean(axis=2)
     h, w = frame.shape
-    # Focus on the central vertical band (where enemies appear on the horizon).
     band = frame[h // 3 : 2 * h // 3, :].astype(np.float32)
-    col = band.mean(axis=0)  # per-column brightness, length w
+    col = band.mean(axis=0)
     salience = np.abs(col - np.median(col))
-    # Aggregate columns into n_bins.
     edges = np.linspace(0, w, n_bins + 1).astype(int)
     obs = np.array([salience[edges[i] : edges[i + 1]].mean() for i in range(n_bins)])
     m = obs.max()
@@ -111,6 +137,7 @@ def main() -> None:
             sys.exit(f"scenario config not found: {cfg}")
         game.load_config(str(cfg))
     game.set_screen_format(vzd.ScreenFormat.GRAY8)
+    game.set_labels_buffer_enabled(True)  # ground-truth enemy bearings
     game.set_window_visible(not args.no_window)
     # We drive our own buttons: turn left, turn right, attack.
     game.set_available_buttons([vzd.Button.TURN_LEFT, vzd.Button.TURN_RIGHT, vzd.Button.ATTACK])
@@ -135,6 +162,15 @@ def main() -> None:
         reply = brain.stdout.readline()
         return [float(t) for t in reply.split()]
 
+    screen_w = game.get_screen_width()
+
+    def bearing_now() -> float | None:
+        """Nearest-enemy screen bearing of the current (post-action) frame."""
+        if game.is_episode_finished():
+            return None
+        _, b = enemy_retina(game.get_state(), args.inputs, screen_w)
+        return b
+
     total_kills = 0
     try:
         for ep in range(args.episodes):
@@ -144,7 +180,7 @@ def main() -> None:
             prev_health = 100.0
             while not game.is_episode_finished():
                 state = game.get_state()
-                obs = encode_retina(state.screen_buffer, args.inputs)
+                obs, _ = enemy_retina(state, args.inputs, screen_w)
                 actions = decide(obs, prev_reward)
 
                 # Map action heads onto buttons: head 0 steers (low = left, high =
@@ -154,10 +190,25 @@ def main() -> None:
                 buttons = [1 if turn < 0.4 else 0, 1 if turn > 0.6 else 0, 1 if shoot > 0.5 else 0]
                 game.make_action(buttons, args.frame_skip)
 
-                # Reward the action just taken: reward kills, punish taking damage.
+                # Dense reward for the action just taken: a big kill bonus, a small
+                # penalty for taking damage, and — crucially — a dense shaping term
+                # that rewards bringing the nearest enemy toward the crosshair
+                # (screen centre). Without this shaping, kills are far too sparse
+                # for the node-perturbation readout to get any gradient.
                 kills = game.get_game_variable(vzd.GameVariable.KILLCOUNT)
                 health = game.get_game_variable(vzd.GameVariable.HEALTH)
-                prev_reward = 1.0 * (kills - prev_kills) - 0.02 * max(0.0, prev_health - health)
+                bearing = bearing_now()
+                center = (1.0 - 2.0 * abs(bearing - 0.5)) if bearing is not None else -0.1
+                # Couple the shoot head to aim: firing while centred pays, spraying
+                # off-target costs — so the shoot readout gets a dense gradient
+                # instead of waiting on rare kills.
+                shot_bonus = 0.4 * (center - 0.3) if buttons[2] else 0.0
+                prev_reward = (
+                    3.0 * (kills - prev_kills)
+                    - 0.02 * max(0.0, prev_health - health)
+                    + 0.3 * center
+                    + shot_bonus
+                )
                 prev_kills, prev_health = kills, health
 
             ep_kills = game.get_game_variable(vzd.GameVariable.KILLCOUNT)
