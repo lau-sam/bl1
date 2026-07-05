@@ -16,7 +16,7 @@ use ratatui::widgets::{
 
 use bl1_games::{DoomState, EnvView, PongState};
 
-use crate::app::{App, Focus, RunResult, Tab};
+use crate::app::{App, DoomSession, Focus, RunResult, Tab, substrate_label};
 
 const CYAN: Color = Color::Cyan;
 const BG_BAR: Color = Color::Rgb(30, 30, 40);
@@ -604,6 +604,20 @@ fn truncate(s: &str, max: usize) -> String {
 // ---------------------------------------------------------------------------
 
 fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
+    // A live real-DOOM session (spawned with D) is a *separate* brain/process;
+    // show its own learning signal on top so it's never confused with the local
+    // arena training below.
+    let area = if let Some(session) = &app.doom {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(9), Constraint::Min(0)])
+            .split(area);
+        draw_doom_monitor(frame, session, rows[0]);
+        rows[1]
+    } else {
+        area
+    };
+
     let Some(trainer) = app.trainer.as_deref() else {
         let p = Paragraph::new(vec![
             Line::from(""),
@@ -654,6 +668,80 @@ fn draw_train(frame: &mut Frame, app: &App, area: Rect) {
     draw_train_gauges(frame, trainer, bottom[0]);
     draw_sensory(frame, trainer, bottom[1]);
     draw_train_stats(frame, trainer, app, bottom[2]);
+}
+
+/// The real-DOOM session monitor: the live learning signal of the *separate*
+/// Doom brain (kills per episode), tailed from the bridge log.
+fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
+    let state = if s.finished { "finished" } else { "running" };
+    let scolor = if s.finished { Color::DarkGray } else { Color::Green };
+    let title = format!(
+        " real DOOM ▸ {} · {} · pid {} [{}] ",
+        s.scenario,
+        substrate_label(s.substrate),
+        s.pid,
+        state
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(scolor))
+        .title(Span::styled(
+            title,
+            Style::default().fg(scolor).add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // stat line
+            Constraint::Min(0),    // kills sparkline
+            Constraint::Length(1), // note
+        ])
+        .split(inner);
+
+    let last = s.kills.last().copied().unwrap_or(0);
+    let stat = if s.kills.is_empty() {
+        "waiting for the first episode…  (Doom opens in its own window)".to_string()
+    } else {
+        format!(
+            "episode {}/{}   last {} kills   mean {:.2} kills/ep   (real Doom, not the arena below)",
+            s.kills.len(),
+            s.total_eps.max(s.kills.len()),
+            last,
+            s.mean_kills()
+        )
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(stat, Style::default().fg(Color::Gray)))),
+        rows[0],
+    );
+
+    if s.kills.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "the culture is learning to aim and shoot…",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            rows[1],
+        );
+    } else {
+        let data: Vec<u64> = s.kills.iter().map(|&k| k as u64).collect();
+        frame.render_widget(
+            Sparkline::default()
+                .data(&data)
+                .style(Style::default().fg(Color::Red)),
+            rows[1],
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "separate process — scenario s · substrate b · seed r apply to the NEXT launch (D)",
+            Style::default().fg(Color::DarkGray),
+        ))),
+        rows[2],
+    );
 }
 
 /// A per-event hit/miss timeline: one coloured block per ball, oldest→newest,
@@ -1329,6 +1417,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("b", "substrate"),
             ("m", "control mode"),
             ("D", "real DOOM"),
+            ("s", "scenario"),
             ("w/o", "save/load brain"),
             ("Tab", "view"),
             ("?", "help"),
@@ -1436,7 +1525,11 @@ fn draw_help(frame: &mut Frame, app: &App) {
             ));
             lines.push(help_row(
                 "D",
-                "launch real DOOM (ViZDoom) driven by the culture — opens a separate Doom window; needs `pip install vizdoom numpy`",
+                "launch real DOOM (ViZDoom) driven by the culture — a separate Doom window; its live kills/episode show in the monitor on top. Needs `pip install vizdoom numpy`",
+            ));
+            lines.push(help_row(
+                "s",
+                "cycle the real-DOOM scenario (defend_the_center / basic / defend_the_line) for the next launch",
             ));
             lines.push(help_row(
                 "w / o",

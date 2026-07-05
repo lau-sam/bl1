@@ -562,8 +562,10 @@ python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 80
 
 Or launch it straight from the cockpit: open the **Train** tab (`3`) and press **`D`** — the TUI
 pre-flights the prerequisites (brain built, ViZDoom installed), tells you exactly what's missing if
-not, and otherwise spawns the bridge so real Doom opens in its own window (the current substrate
-carries over).
+not, and otherwise spawns the bridge so real Doom opens in its own window. It carries over the current
+substrate, seed, and the scenario picked with **`s`**, and streams the session's live kills/episode
+into a monitor panel at the top of the Train view. Note the Doom session is a **separate process/brain**
+— the Train gauges below it are the local arena, and config changes apply to the *next* launch.
 
 This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real
 Doom engine, over the same node-perturbation rule that plays Pong. It **works** — on

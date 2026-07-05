@@ -132,6 +132,74 @@ struct PendingRun {
     started: Instant,
 }
 
+/// Short label for a substrate.
+pub fn substrate_label(s: Substrate) -> &'static str {
+    match s {
+        Substrate::Feedforward => "feed-forward bank",
+        Substrate::Reservoir => "recurrent culture",
+    }
+}
+
+/// ViZDoom scenarios offered by the launcher (aim-and-shoot fits the culture's
+/// coarse sensory/motor map).
+pub const DOOM_SCENARIOS: [&str; 3] = ["defend_the_center", "basic", "defend_the_line"];
+
+/// Parse the bridge log into `(kills_per_episode, total_episodes)`.
+///
+/// Bridge lines look like `episode  23/200: kills 4  (mean 2.69)`; everything
+/// else (the ready banner, the final summary) is ignored.
+fn parse_doom_log(text: &str) -> (Vec<u32>, usize) {
+    let mut kills = Vec::new();
+    let mut total = 0usize;
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("episode ") else {
+            continue;
+        };
+        let Some((_idx, after)) = rest.split_once('/') else {
+            continue;
+        };
+        let Some((tot, after)) = after.split_once(':') else {
+            continue;
+        };
+        // after == " kills 4  (mean 2.69)" → second whitespace token is the count.
+        if let Some(k) = after
+            .split_whitespace()
+            .nth(1)
+            .and_then(|t| t.parse::<u32>().ok())
+        {
+            kills.push(k);
+            total = tot.trim().parse().unwrap_or(total);
+        }
+    }
+    (kills, total)
+}
+
+/// A live real-DOOM session spawned from the TUI: the external bridge process
+/// plus the training signal parsed from its log, so the cockpit can show what
+/// the *real* Doom brain is doing (separate from the local Train arena).
+pub struct DoomSession {
+    child: std::process::Child,
+    log_path: PathBuf,
+    pub scenario: String,
+    pub substrate: Substrate,
+    pub pid: u32,
+    /// Kills per finished episode, in order (the real-Doom learning curve).
+    pub kills: Vec<u32>,
+    pub total_eps: usize,
+    pub finished: bool,
+}
+
+impl DoomSession {
+    /// Overall mean kills per finished episode.
+    pub fn mean_kills(&self) -> f32 {
+        if self.kills.is_empty() {
+            0.0
+        } else {
+            self.kills.iter().sum::<u32>() as f32 / self.kills.len() as f32
+        }
+    }
+}
+
 /// Whole-application state.
 pub struct App {
     pub configs: Vec<ConfigEntry>,
@@ -165,6 +233,11 @@ pub struct App {
     pub train_substrate: Substrate,
     /// Which game the culture is learning (Pong vs. DOOM aim-and-shoot).
     pub train_game: bl1_games::EnvSpec,
+    /// Selected ViZDoom scenario (index into [`DOOM_SCENARIOS`]) for the next
+    /// real-DOOM launch.
+    pub doom_scenario: usize,
+    /// The live real-DOOM session spawned with `D`, if any.
+    pub doom: Option<DoomSession>,
 }
 
 impl App {
@@ -221,6 +294,8 @@ impl App {
             train_control: bl1_games::PaddleControl::Direct,
             train_substrate: Substrate::Feedforward,
             train_game: bl1_games::EnvSpec::Pong,
+            doom_scenario: 0,
+            doom: None,
         }
     }
 
@@ -495,14 +570,24 @@ impl App {
             self.status = format!("ViZDoom not installed — run:  {python} -m pip install vizdoom numpy");
             return;
         }
+        // Only one live session at a time — stop a previous one before launching.
+        self.stop_doom();
+
         // Doom + the TUI can't share the terminal, so tee the bridge's output to
-        // a log file the user can tail if the Doom window doesn't appear.
+        // a log file (fresh each launch) — the TUI tails it to show the session's
+        // learning signal, and the user can read it if the window doesn't appear.
         let log_path = repo.join(".vizdoom_bridge.log");
+        let scenario = DOOM_SCENARIOS[self.doom_scenario].to_string();
+        let seed = self.train_seed.to_string();
+        let substrate = self.train_substrate;
         let mut cmd = Command::new(&python);
-        cmd.arg(&script)
-            .args(["--scenario", "defend_the_center", "--episodes", "200"])
+        // `-u`: unbuffered stdout, so episode results reach the log live (Python
+        // block-buffers when stdout is a file, which would stall the monitor).
+        cmd.arg("-u")
+            .arg(&script)
+            .args(["--scenario", &scenario, "--episodes", "200", "--seed", &seed])
             .stdin(Stdio::null());
-        if self.train_substrate == Substrate::Reservoir {
+        if substrate == Substrate::Reservoir {
             cmd.args(["--reservoir", "--neurons", "800"]);
         }
         if let Ok(log) = fs::File::create(&log_path)
@@ -512,13 +597,62 @@ impl App {
         }
         match cmd.spawn() {
             Ok(child) => {
+                let pid = child.id();
+                self.doom = Some(DoomSession {
+                    child,
+                    log_path,
+                    scenario: scenario.clone(),
+                    substrate,
+                    pid,
+                    kills: Vec::new(),
+                    total_eps: 0,
+                    finished: false,
+                });
                 self.status = format!(
-                    "Launched real DOOM (ViZDoom) — watch the Doom window (pid {}). Log: {}",
-                    child.id(),
-                    log_path.display()
+                    "Launched real DOOM ({scenario}, {}) — watch the Doom window (pid {pid}); live stats in the Train panel.",
+                    substrate_label(substrate),
                 );
             }
             Err(e) => self.status = format!("Failed to launch the DOOM bridge: {e}"),
+        }
+    }
+
+    /// Cycle the ViZDoom scenario used for the next launch.
+    pub fn cycle_doom_scenario(&mut self) {
+        self.doom_scenario = (self.doom_scenario + 1) % DOOM_SCENARIOS.len();
+        self.status = format!(
+            "Real-DOOM scenario: {} (applies to the next launch — press D).",
+            DOOM_SCENARIOS[self.doom_scenario]
+        );
+    }
+
+    /// Whether a real-DOOM session process is currently live.
+    pub fn doom_active(&self) -> bool {
+        self.doom.as_ref().is_some_and(|d| !d.finished)
+    }
+
+    /// Terminate the running real-DOOM session, if any.
+    fn stop_doom(&mut self) {
+        if let Some(mut d) = self.doom.take() {
+            let _ = d.child.kill();
+            let _ = d.child.wait();
+        }
+    }
+
+    /// Refresh the live real-DOOM session: parse the bridge log for the per-episode
+    /// kill signal and check whether the process has exited. Call once per tick.
+    pub fn poll_doom(&mut self) {
+        let Some(d) = self.doom.as_mut() else {
+            return;
+        };
+        if let Ok(text) = fs::read_to_string(&d.log_path) {
+            let (kills, total) = parse_doom_log(&text);
+            d.kills = kills;
+            d.total_eps = total;
+        }
+        // Has the process exited?
+        if let Ok(Some(_)) = d.child.try_wait() {
+            d.finished = true;
         }
     }
 
@@ -953,5 +1087,18 @@ mod tests {
         assert!(!app.is_running(), "run should finish");
         assert_eq!(app.history.len(), 1);
         assert!(app.result.is_some());
+    }
+
+    #[test]
+    fn parses_doom_bridge_log() {
+        let log = "\
+bl1-brain ready: 32 inputs, 3 action heads, substrate feed-forward bank
+episode   1/200: kills 0  (mean 0.00)
+episode   2/200: kills 3  (mean 1.50)
+episode   3/200: kills 2  (mean 1.67)
+Done. 5.0 kills over 3 episodes (1.67/episode).";
+        let (kills, total) = parse_doom_log(log);
+        assert_eq!(kills, vec![0, 3, 2]);
+        assert_eq!(total, 200);
     }
 }

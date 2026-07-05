@@ -53,9 +53,11 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
         app.poll_run();
         app.train_tick();
+        app.poll_doom();
         terminal.draw(|frame| ui::draw(frame, app))?;
-        // Redraw quickly while a sim runs or training is live (smooth animation).
-        let timeout = if app.is_running() || app.training {
+        // Redraw quickly while a sim runs, training is live, or a real-DOOM
+        // session is streaming its stats (smooth animation / live monitor).
+        let timeout = if app.is_running() || app.training || app.doom_active() {
             30
         } else {
             200
@@ -120,6 +122,10 @@ fn handle_key(app: &mut App, code: KeyCode) {
             }
             KeyCode::Char('D') => {
                 app.launch_real_doom();
+                return;
+            }
+            KeyCode::Char('s') => {
+                app.cycle_doom_scenario();
                 return;
             }
             _ => {}
