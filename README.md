@@ -415,7 +415,7 @@ dependency-light simulation and a keyboard-driven control panel.
 | `bl1-analysis` | Burst detection (Wagenaar), branching ratio and avalanche exponents (Beggs & Plenz, MLE) |
 | `bl1-mea` | 64-channel and HD-MEA layouts, neuron→electrode mapping, spike detection, LFP |
 | `bl1-sim` | Neuron placement, distance-dependent connectivity, `Culture` factory, YAML config loader |
-| `bl1-games` | Closed-loop games (`bl1-pong`, `bl1-doom`) on a generic node-perturbation `Learner`: a swappable `Substrate` (feed-forward bank or recurrent-culture reservoir) feeds a swappable `Environment` (Pong, DOOM) — the culture **learns** to play both; shareable trained brains |
+| `bl1-games` | Closed-loop games (`bl1-pong`, `bl1-doom`) on a generic node-perturbation `Learner`: a swappable `Substrate` (feed-forward bank or recurrent-culture reservoir) feeds a swappable `Environment` (Pong, DOOM) — the culture **learns** to play both; shareable trained brains. `bl1-brain` exposes the culture as a stdio controller for external games (real DOOM via the ViZDoom bridge) |
 | `bl1-tui` | The `bl1` binary: a terminal UI to run and inspect simulations |
 
 From the repo root, `task` wraps the common commands:
@@ -537,6 +537,33 @@ task doom -- --smooth --steps 6000              # inertial aim — the culture m
 It prints kills/misses, a kill-rate curve, and a learning-improvement score, and can export a
 per-event CSV (`--csv path`). The enemy is a simulated sprite in a simulated arena — the point is that
 the **same simulated culture** that learns Pong also learns to aim, with zero changes to the learner.
+
+### Real DOOM via ViZDoom
+
+The built-in arena is a teaching toy. To put the culture in the **real Doom engine**, BL-1 ships a
+brain server and a [ViZDoom](https://vizdoom.cz) bridge. The culture stays the brain — `bl1-brain`
+runs the spiking substrate + a multi-head reward-modulated readout and speaks a tiny stdio protocol
+(`<reward> <obs…>` in, `<action…>` out) — and a Python script drives a real Doom scenario, encodes
+each rendered frame into a coarse retina the culture senses, computes reward from the game variables
+(kills up, damage down), and maps the returned actions onto Doom buttons.
+
+```text
+  ViZDoom (real Doom)  ──frame→retina[N], reward──▶  bl1-brain  ──actions[M]──▶  turn / shoot
+                                                     (spiking culture, learns online)
+```
+
+```bash
+cd rust && cargo build --release -p bl1-games        # build the brain server
+pip install vizdoom numpy                            # ViZDoom ships scenarios + a free WAD
+python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 50
+#   … --reservoir --neurons 800   to run the recurrent culture as the brain
+```
+
+This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real
+Doom engine, over the same node-perturbation rule that plays Pong. It targets aim-and-shoot scenarios
+(`defend_the_center`, `basic`) that fit the culture's coarse sensory/motor map — not a full-campaign
+agent. The IPC learning loop is verified end-to-end; ViZDoom itself needs a display (or headless SDL)
+and is installed separately.
 
 ## License
 

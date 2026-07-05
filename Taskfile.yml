@@ -65,6 +65,12 @@ tasks:
     cmds:
       - cargo run --release -p bl1-games --bin bl1-doom -- {{.CLI_ARGS}}
 
+  doom-real:
+    desc: Drive real DOOM (ViZDoom) with the culture — needs `pip install vizdoom numpy`
+    cmds:
+      - cargo build --release -p bl1-games --manifest-path rust/Cargo.toml
+      - "{{.VENV}}/python scripts/vizdoom_bridge.py {{.CLI_ARGS}}"
+
   pong-sweep:
     desc: Multi-seed parameter sweep for closed-loop Pong learning (writes results/pong_sweep.csv)
     dir: rust
