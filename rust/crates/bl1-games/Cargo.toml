@@ -18,6 +18,10 @@ path = "src/bin/sweep.rs"
 name = "bl1-doom"
 path = "src/bin/doom.rs"
 
+[[bin]]
+name = "bl1-brain"
+path = "src/bin/brain.rs"
+
 [dependencies]
 bl1-core = { workspace = true }
 bl1-sim = { workspace = true }

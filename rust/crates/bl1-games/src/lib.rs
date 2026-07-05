@@ -26,6 +26,7 @@ pub mod feedback;
 pub mod learner;
 pub mod plasticity;
 pub mod pong;
+pub mod remote_brain;
 pub mod substrate;
 pub mod trainer;
 
@@ -34,6 +35,7 @@ pub use closed_loop::{ClosedLoop, LoopConfig, RunLog};
 pub use doom::{DoomArena, DoomParams, DoomState};
 pub use env::{EnvView, Environment, GameKind};
 pub use learner::{Brain, EnvSpec, LearnParams, Learner, PaddleControl, SubstrateSpec};
+pub use remote_brain::{BrainParams, RemoteBrain};
 pub use plasticity::{Reward, ThreeFactorParams, ThreeFactorStdp};
 pub use pong::{Action, Event, Pong, PongEnv, PongState};
 pub use substrate::{CultureReservoir, FeedForwardBank, Substrate, SubstrateKind};
