@@ -720,12 +720,12 @@ fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default().fg(Color::Gray)
         };
+        // Selected value: bold in the terminal's default fg (never fg(White) —
+        // it vanishes on light backgrounds).
         let value_style = if !active {
             Style::default().fg(Color::DarkGray)
         } else if selected {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
+            Style::default().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
