@@ -1328,6 +1328,7 @@ fn draw_keybar(frame: &mut Frame, app: &App, area: Rect) {
             ("g", "game"),
             ("b", "substrate"),
             ("m", "control mode"),
+            ("D", "real DOOM"),
             ("w/o", "save/load brain"),
             ("Tab", "view"),
             ("?", "help"),
@@ -1432,6 +1433,10 @@ fn draw_help(frame: &mut Frame, app: &App) {
             lines.push(help_row(
                 "m",
                 "paddle control: direct (teleport) ↔ smooth-pursuit (inertial — must lead the ball)",
+            ));
+            lines.push(help_row(
+                "D",
+                "launch real DOOM (ViZDoom) driven by the culture — opens a separate Doom window; needs `pip install vizdoom numpy`",
             ));
             lines.push(help_row(
                 "w / o",

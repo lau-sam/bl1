@@ -560,6 +560,11 @@ python scripts/vizdoom_bridge.py --scenario defend_the_center --episodes 80
 #   … --reservoir --neurons 800   to run the recurrent culture as the brain
 ```
 
+Or launch it straight from the cockpit: open the **Train** tab (`3`) and press **`D`** — the TUI
+pre-flights the prerequisites (brain built, ViZDoom installed), tells you exactly what's missing if
+not, and otherwise spawns the bridge so real Doom opens in its own window (the current substrate
+carries over).
+
 This is the honest DishBrain–DOOM loop: a *simulated* culture learning to aim and shoot in the real
 Doom engine, over the same node-perturbation rule that plays Pong. It **works** — on
 `defend_the_center` the culture climbs from ~1 to ~4 kills per episode over ~80 episodes (verified

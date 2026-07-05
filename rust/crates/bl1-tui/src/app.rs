@@ -2,7 +2,8 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::Instant;
@@ -435,6 +436,89 @@ impl App {
                 );
             }
             Err(e) => self.status = format!("Load failed ({}): {e}", path.display()),
+        }
+    }
+
+    /// Locate the ViZDoom bridge script + repo root, trying paths relative to
+    /// both the repo root and the `rust/` dir the TUI is usually launched from.
+    fn find_bridge() -> Option<(PathBuf, PathBuf)> {
+        for cand in ["scripts/vizdoom_bridge.py", "../scripts/vizdoom_bridge.py"] {
+            let p = Path::new(cand);
+            if p.exists() {
+                let script = p.canonicalize().ok()?;
+                let repo = script.parent()?.parent()?.to_path_buf();
+                return Some((script, repo));
+            }
+        }
+        None
+    }
+
+    /// Pick a Python interpreter: the repo venv if present, else system python3.
+    fn find_python(repo: &Path) -> String {
+        for cand in [repo.join(".venv/bin/python"), repo.join(".venv/bin/python3")] {
+            if cand.exists() {
+                return cand.to_string_lossy().into_owned();
+            }
+        }
+        "python3".to_string()
+    }
+
+    /// Launch the **real DOOM** (ViZDoom) bridge as a separate process, driven by
+    /// the culture. Doom opens its own window; the TUI is just the launcher, so
+    /// this pre-flights the prerequisites and reports precisely what's missing.
+    /// The current substrate (feed-forward vs. reservoir) carries over.
+    pub fn launch_real_doom(&mut self) {
+        let Some((script, repo)) = Self::find_bridge() else {
+            self.status =
+                "Can't find scripts/vizdoom_bridge.py — launch the TUI from the repo.".to_string();
+            return;
+        };
+        // The bridge spawns the brain binary, so it must be built.
+        let brain_built = ["release", "debug"]
+            .iter()
+            .any(|p| repo.join(format!("rust/target/{p}/bl1-brain")).exists());
+        if !brain_built {
+            self.status =
+                "Build the brain first: cd rust && cargo build --release -p bl1-games".to_string();
+            return;
+        }
+        let python = Self::find_python(&repo);
+        // Pre-flight: is ViZDoom importable in that interpreter?
+        let vizdoom_ok = Command::new(&python)
+            .args(["-c", "import vizdoom"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !vizdoom_ok {
+            self.status = format!("ViZDoom not installed — run:  {python} -m pip install vizdoom numpy");
+            return;
+        }
+        // Doom + the TUI can't share the terminal, so tee the bridge's output to
+        // a log file the user can tail if the Doom window doesn't appear.
+        let log_path = repo.join(".vizdoom_bridge.log");
+        let mut cmd = Command::new(&python);
+        cmd.arg(&script)
+            .args(["--scenario", "defend_the_center", "--episodes", "200"])
+            .stdin(Stdio::null());
+        if self.train_substrate == Substrate::Reservoir {
+            cmd.args(["--reservoir", "--neurons", "800"]);
+        }
+        if let Ok(log) = fs::File::create(&log_path)
+            && let Ok(log2) = log.try_clone()
+        {
+            cmd.stdout(Stdio::from(log)).stderr(Stdio::from(log2));
+        }
+        match cmd.spawn() {
+            Ok(child) => {
+                self.status = format!(
+                    "Launched real DOOM (ViZDoom) — watch the Doom window (pid {}). Log: {}",
+                    child.id(),
+                    log_path.display()
+                );
+            }
+            Err(e) => self.status = format!("Failed to launch the DOOM bridge: {e}"),
         }
     }
 

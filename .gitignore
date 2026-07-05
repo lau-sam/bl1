@@ -20,3 +20,4 @@ rust/brains/
 # ViZDoom runtime artifacts
 _vizdoom.ini
 _vizdoom/
+.vizdoom_bridge.log

@@ -118,6 +118,10 @@ fn handle_key(app: &mut App, code: KeyCode) {
                 app.toggle_game();
                 return;
             }
+            KeyCode::Char('D') => {
+                app.launch_real_doom();
+                return;
+            }
             _ => {}
         }
     }
