@@ -237,8 +237,20 @@ mod render_tests {
     use ratatui::backend::TestBackend;
 
     fn draw(app: &mut App) {
+        let _ = render_text(app);
+    }
+
+    /// Render and return the flattened cell text, for asserting on-screen content.
+    fn render_text(app: &mut App) -> String {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|f| ui::draw(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
     }
 
     /// Enter a TUI game from the menu, learn a little, and render — smoking out
@@ -259,6 +271,17 @@ mod render_tests {
         let mut app = App::new(None);
         app.set_tab(Tab::Train);
         draw(&mut app);
+    }
+
+    #[test]
+    fn train_menu_shows_option_hints() {
+        let mut app = App::new(None);
+        app.set_tab(Tab::Train);
+        app.game_choice = GameChoice::DoomReal; // makes the Scenario field active
+        let text = render_text(&mut app);
+        assert!(text.contains("sharp bank vs. the real recurrent culture"));
+        assert!(text.contains("reproducible run: game + culture wiring + noise"));
+        assert!(text.contains("ViZDoom map"));
     }
 
     #[test]

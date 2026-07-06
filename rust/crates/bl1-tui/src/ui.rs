@@ -683,22 +683,38 @@ fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
     let substrate_val = substrate_label(app.train_substrate);
     let seed_val = app.train_seed.to_string();
 
-    let rows: [(MenuField, &str, String, bool); 5] = [
-        (MenuField::Game, "Game", app.game_choice.label().to_string(), true),
-        (MenuField::Substrate, "Substrate", substrate_val.to_string(), true),
+    // Each row carries a short inline hint (shown greyed after the value) so every
+    // option is self-describing at a glance.
+    let rows: [(MenuField, &str, String, bool, &str); 5] = [
+        (MenuField::Game, "Game", app.game_choice.label().to_string(), true, ""),
+        (
+            MenuField::Substrate,
+            "Substrate",
+            substrate_val.to_string(),
+            true,
+            "sharp bank vs. the real recurrent culture",
+        ),
         (
             MenuField::Control,
             "Control",
             control_val.to_string(),
             app.game_choice.is_tui(),
+            "snap vs. inertial aim",
         ),
         (
             MenuField::Scenario,
             "Scenario",
             scenario_val.to_string(),
             app.game_choice == GameChoice::DoomReal,
+            "ViZDoom map",
         ),
-        (MenuField::Seed, "Seed", seed_val, true),
+        (
+            MenuField::Seed,
+            "Seed",
+            seed_val,
+            true,
+            "reproducible run: game + culture wiring + noise",
+        ),
     ];
 
     let mut lines = vec![
@@ -712,7 +728,7 @@ fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
         )),
         Line::from(""),
     ];
-    for (i, (_f, label, value, active)) in rows.iter().enumerate() {
+    for (i, (_f, label, value, active, hint)) in rows.iter().enumerate() {
         let selected = i == app.menu_field;
         let marker = if selected { "› " } else { "  " };
         let label_style = if selected {
@@ -729,11 +745,20 @@ fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default()
         };
-        lines.push(Line::from(vec![
+        let mut spans = vec![
             Span::styled(format!("  {marker}"), label_style),
             Span::styled(format!("{label:<11}"), label_style),
             Span::styled(value.clone(), value_style),
-        ]));
+        ];
+        // Inline hint, only where the field is active (inactive rows already show
+        // a self-explanatory "— (…)" placeholder as their value).
+        if *active && !hint.is_empty() {
+            spans.push(Span::styled(
+                format!("  — {hint}"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(spans));
     }
     lines.push(Line::from(""));
     let blurb = match app.game_choice {
