@@ -90,6 +90,7 @@ dependencies = [
  "bl1-mea",
  "bl1-sim",
  "clap",
+ "libc",
  "rand",
  "rand_pcg",
  "serde",

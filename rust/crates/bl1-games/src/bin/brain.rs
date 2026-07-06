@@ -18,12 +18,39 @@
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::Result;
 use bl1_games::{
     BrainParams, CultureReservoir, FeedForwardBank, RemoteBrain, RemoteBrainState, Substrate,
 };
 use clap::Parser;
+
+/// Set by the SIGTERM/SIGINT handler so the main loop can save the readout and
+/// exit cleanly. The TUI stops a real-DOOM session by SIGTERM-ing the whole
+/// process group, so the brain must persist on signal — not only on the bridge's
+/// empty-line / EOF shutdown, which the group signal would otherwise pre-empt.
+static STOP: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_stop_signal(_sig: libc::c_int) {
+    STOP.store(true, Ordering::SeqCst);
+}
+
+/// Catch SIGTERM/SIGINT so a group-kill doesn't terminate the brain before it
+/// saves. The handler only does an atomic store, which is async-signal-safe.
+#[cfg(unix)]
+fn install_signal_handlers() {
+    unsafe {
+        libc::signal(libc::SIGTERM, on_stop_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_stop_signal as *const () as libc::sighandler_t);
+    }
+}
+
+#[cfg(not(unix))]
+fn install_signal_handlers() {}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -72,13 +99,14 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     load: Option<PathBuf>,
 
-    /// Save the readout to this file on graceful shutdown (empty line / EOF).
+    /// Save the readout to this file on shutdown (empty line / EOF / SIGTERM).
     #[arg(long, value_name = "PATH")]
     save: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    install_signal_handlers();
 
     let substrate: Box<dyn Substrate> = if cli.reservoir {
         Box::new(CultureReservoir::new(cli.neurons, cli.inputs, 40, cli.seed))
@@ -129,23 +157,46 @@ fn main() -> Result<()> {
         }
     );
 
-    let stdin = io::stdin();
+    // Read stdin on a worker thread so the main loop can poll the STOP flag: a
+    // blocking `stdin.lines()` would swallow SIGTERM (the read auto-retries on
+    // EINTR) and never observe the signal until the client sends more data.
+    let (tx, rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(l) => {
+                    if tx.send(l).is_err() {
+                        break; // main loop gone
+                    }
+                }
+                Err(_) => break, // read error / EOF
+            }
+        }
+        // Dropping `tx` here disconnects `rx`, waking the main loop for a final save.
+    });
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut obs = vec![0.0f32; cli.inputs];
 
-    for line in stdin.lock().lines() {
-        let line = line?;
+    loop {
+        if STOP.load(Ordering::Relaxed) {
+            break; // SIGTERM/SIGINT: fall through to the final save.
+        }
+        let line = match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(l) => l,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue, // idle: re-check STOP
+            Err(mpsc::RecvTimeoutError::Disconnected) => break, // stdin closed / EOF
+        };
         let line = line.trim();
         if line.is_empty() {
             break; // graceful shutdown
         }
         let mut it = line.split_whitespace();
-        let reward: f32 = match it.next() {
-            Some(tok) => tok
-                .parse()
-                .map_err(|_| anyhow::anyhow!("bad reward token: {tok:?}"))?,
-            None => break,
+        let reward: f32 = match it.next().and_then(|tok| tok.parse().ok()) {
+            Some(r) => r,
+            None => break, // malformed line: stop and save what we have
         };
         // Missing observation values are treated as silence — a length mismatch
         // is the client's bug but shouldn't crash the brain mid-game.
@@ -171,7 +222,7 @@ fn main() -> Result<()> {
         }
     }
 
-    // Final save on graceful shutdown (empty line / EOF).
+    // Final save on any shutdown path: empty line, EOF, or SIGTERM/SIGINT.
     write_state(&cli, &brain, substrate_tag, true);
     Ok(())
 }
