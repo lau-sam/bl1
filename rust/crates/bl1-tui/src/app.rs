@@ -212,12 +212,14 @@ struct DoomLog {
     total_eps: usize,
     shots: u64,
     frames: u64,
+    ammo: u32,
 }
 
 /// Parse the bridge log. Lines look like
-/// `episode  23/200: kills 4  shots 51  frames 380  (mean 2.69)`; everything else
-/// (the ready banner, the final summary) is ignored. `shots`/`frames` are the
-/// running session totals from the most recent episode line.
+/// `episode  23/200: kills 4  shots 51  frames 380  ammo 26  (mean 2.69)`; everything
+/// else (the ready banner, the final summary) is ignored. `shots`/`frames` are the
+/// running session totals from the most recent episode line; `ammo` is that
+/// episode's starting ammo (the per-episode kill ceiling).
 fn parse_doom_log(text: &str) -> DoomLog {
     let mut out = DoomLog::default();
     for line in text.lines() {
@@ -248,6 +250,9 @@ fn parse_doom_log(text: &str) -> DoomLog {
             if let Some(f) = val("frames") {
                 out.frames = f;
             }
+            if let Some(a) = val("ammo") {
+                out.ammo = a as u32;
+            }
         }
     }
     out
@@ -273,6 +278,8 @@ pub struct DoomSession {
     pub frames: u64,
     /// Lifetime decisions across sessions (from the saved brain's step count).
     pub lifetime_frames: usize,
+    /// Starting ammo per episode = the per-episode kill ceiling (0 until known).
+    pub ammo_cap: u32,
     pub finished: bool,
 }
 
@@ -750,6 +757,7 @@ impl App {
                     shots: 0,
                     frames: 0,
                     lifetime_frames: 0,
+                    ammo_cap: 0,
                     finished: false,
                 });
                 self.status = format!(
@@ -815,6 +823,7 @@ impl App {
             d.total_eps = parsed.total_eps;
             d.shots = parsed.shots;
             d.frames = parsed.frames;
+            d.ammo_cap = parsed.ammo;
         }
         // Lifetime frames = the saved brain's step count (across sessions).
         if let Ok(text) = fs::read_to_string(&d.brain_file)
@@ -1266,13 +1275,14 @@ mod tests {
     fn parses_doom_bridge_log() {
         let log = "\
 bl1-brain ready: 32 inputs, 3 action heads, substrate feed-forward bank
-episode   1/inf: kills 0  shots 12  frames 40  (mean 0.00)
-episode   2/inf: kills 3  shots 25  frames 88  (mean 1.50)
-episode   3/inf: kills 2  shots 41  frames 150  (mean 1.67)
+episode   1/inf: kills 0  shots 12  frames 40  ammo 26  (mean 0.00)
+episode   2/inf: kills 3  shots 25  frames 88  ammo 26  (mean 1.50)
+episode   3/inf: kills 2  shots 41  frames 150  ammo 26  (mean 1.67)
 Stopped. 5 kills · 41 shots · 150 frames this session.";
         let parsed = parse_doom_log(log);
         assert_eq!(parsed.kills, vec![0, 3, 2]);
         assert_eq!(parsed.shots, 41);
         assert_eq!(parsed.frames, 150);
+        assert_eq!(parsed.ammo, 26);
     }
 }

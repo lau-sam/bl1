@@ -837,6 +837,12 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
 
     let total_kills: u32 = s.kills.iter().sum();
     let best_kills = s.kills.iter().copied().max().unwrap_or(0);
+    // Show the per-episode ceiling (starting ammo) once the bridge reports it.
+    let best_str = if s.ammo_cap > 0 {
+        format!("best {best_kills}/{} ammo", s.ammo_cap)
+    } else {
+        format!("best {best_kills}")
+    };
     let accuracy = if s.shots > 0 {
         100.0 * total_kills as f64 / s.shots as f64
     } else {
@@ -851,11 +857,11 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
         vec![
             Line::from(Span::styled(
                 format!(
-                    "episode {}   {} kills total · mean {:.2}/ep · best {} · last {} · accuracy {:.0}%",
+                    "episode {}   {} kills total · mean {:.2}/ep · {} · last {} · accuracy {:.0}%",
                     s.kills.len(),
                     total_kills,
                     s.mean_kills(),
-                    best_kills,
+                    best_str,
                     s.kills.last().copied().unwrap_or(0),
                     accuracy,
                 ),

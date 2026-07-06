@@ -145,7 +145,9 @@ def main() -> None:
     game.set_window_visible(not args.no_window)
     # We drive our own buttons: turn left, turn right, attack.
     game.set_available_buttons([vzd.Button.TURN_LEFT, vzd.Button.TURN_RIGHT, vzd.Button.ATTACK])
-    game.set_available_game_variables([vzd.GameVariable.HEALTH, vzd.GameVariable.KILLCOUNT])
+    game.set_available_game_variables(
+        [vzd.GameVariable.HEALTH, vzd.GameVariable.KILLCOUNT, vzd.GameVariable.AMMO2]
+    )
     game.set_seed(args.seed)
     game.init()
 
@@ -179,7 +181,8 @@ def main() -> None:
 
     total_kills = 0
     frames = 0  # decisions taken this session
-    shots = 0   # ATTACK presses this session
+    shots = 0   # real bullets fired this session (AMMO2 decrements, not dry clicks)
+    start_ammo = 0  # this episode's starting AMMO2 = the per-episode kill ceiling
     # 0 (or less) episodes = run until stopped (Esc in the TUI / Ctrl-C / SIGTERM).
     ep_iter = itertools.count() if args.episodes <= 0 else range(args.episodes)
     total_str = "inf" if args.episodes <= 0 else str(args.episodes)
@@ -189,6 +192,8 @@ def main() -> None:
             prev_reward = 0.0
             prev_kills = 0.0
             prev_health = 100.0
+            start_ammo = game.get_game_variable(vzd.GameVariable.AMMO2)
+            prev_ammo = start_ammo
             while not game.is_episode_finished():
                 state = game.get_state()
                 obs, _ = enemy_retina(state, args.inputs, screen_w)
@@ -201,7 +206,11 @@ def main() -> None:
                 buttons = [1 if turn < 0.4 else 0, 1 if turn > 0.6 else 0, 1 if shoot > 0.5 else 0]
                 game.make_action(buttons, args.frame_skip)
                 frames += 1
-                shots += buttons[2]
+                # Count bullets actually spent (AMMO2 dropped), so accuracy reflects
+                # real shots, not trigger pulls with an empty clip.
+                ammo = game.get_game_variable(vzd.GameVariable.AMMO2)
+                shots += int(max(0.0, prev_ammo - ammo))
+                prev_ammo = ammo
 
                 # Dense reward for the action just taken: a big kill bonus, a small
                 # penalty for taking damage, and — crucially — a dense shaping term
@@ -226,9 +235,10 @@ def main() -> None:
 
             ep_kills = game.get_game_variable(vzd.GameVariable.KILLCOUNT)
             total_kills += ep_kills
-            # The TUI monitor parses this line (kills / shots / frames per token).
+            # The TUI monitor parses this line (kills / shots / frames / ammo per token).
             print(f"episode {ep + 1:>3}/{total_str}: kills {ep_kills:.0f}  "
-                  f"shots {shots}  frames {frames}  (mean {total_kills / (ep + 1):.2f})")
+                  f"shots {shots}  frames {frames}  ammo {start_ammo:.0f}  "
+                  f"(mean {total_kills / (ep + 1):.2f})")
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
