@@ -47,18 +47,31 @@ pub struct RemoteBrainState {
 }
 
 /// Tunables for the remote brain (shared learning + exploration schedule).
+///
+/// The learning rule (reward-modulated node perturbation on a linear readout)
+/// follows Wunderlich et al. 2019, *Front. Neurosci.* 13:260. Which knobs are
+/// paper-grounded and which are engineering defaults is called out per field —
+/// see also the README "Honesty note on hyperparameters".
 #[derive(Debug, Clone)]
 pub struct BrainParams {
     /// Observation length = substrate input bands.
     pub n_input: usize,
     /// Number of action heads (independent readouts).
     pub n_heads: usize,
-    /// Scales the incoming observation into a sensory current.
+    /// Scales the incoming observation into a sensory current. Engineering scale.
     pub input_amp: f32,
+    /// Readout step size (Wunderlich uses β=0.125; our default is lower).
     pub learning_rate: f32,
+    /// EWMA rate for the reward baseline (Wunderlich uses γ=0.5; ours is slower).
     pub reward_alpha: f32,
+    /// Initial exploration noise σ. NOT paper-derived: Wunderlich and DishBrain
+    /// both use *constant* exploration, no annealing.
     pub explore0: f32,
+    /// Exploration floor. Engineering default; a floor of 0 lets the policy
+    /// freeze (never explores again) — the reservoir's stuck-at-0 failure mode.
     pub explore_min: f32,
+    /// Steps over which σ decays from `explore0` to `explore_min`. Engineering
+    /// default; the whole annealing schedule has no basis in the cited papers.
     pub explore_decay_steps: usize,
 }
 
