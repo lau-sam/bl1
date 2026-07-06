@@ -836,6 +836,7 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
         .split(inner);
 
     let total_kills: u32 = s.kills.iter().sum();
+    let best_kills = s.kills.iter().copied().max().unwrap_or(0);
     let accuracy = if s.shots > 0 {
         100.0 * total_kills as f64 / s.shots as f64
     } else {
@@ -850,10 +851,11 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
         vec![
             Line::from(Span::styled(
                 format!(
-                    "episode {}   {} kills total · mean {:.2}/ep · last {} · accuracy {:.0}%",
+                    "episode {}   {} kills total · mean {:.2}/ep · best {} · last {} · accuracy {:.0}%",
                     s.kills.len(),
                     total_kills,
                     s.mean_kills(),
+                    best_kills,
                     s.kills.last().copied().unwrap_or(0),
                     accuracy,
                 ),
@@ -879,10 +881,15 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
             rows[1],
         );
     } else {
-        let data: Vec<u64> = s.kills.iter().map(|&k| k as u64).collect();
+        // Show the most recent episodes that fit: a Sparkline renders leading
+        // data, so without this the curve freezes once episodes exceed the width.
+        let w = rows[1].width as usize;
+        let start = s.kills.len().saturating_sub(w);
+        let data: Vec<u64> = s.kills[start..].iter().map(|&k| k as u64).collect();
         frame.render_widget(
             Sparkline::default()
                 .data(&data)
+                .max((best_kills as u64).max(1)) // pin the scale to `best` (≥1, avoids /0)
                 .style(Style::default().fg(Color::Red)),
             rows[1],
         );
