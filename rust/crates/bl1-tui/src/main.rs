@@ -275,13 +275,20 @@ mod render_tests {
 
     #[test]
     fn train_menu_shows_option_hints() {
+        use super::app::Substrate;
         let mut app = App::new(None);
         app.set_tab(Tab::Train);
         app.game_choice = GameChoice::DoomReal; // makes the Scenario field active
+        app.train_substrate = Substrate::Feedforward;
         let text = render_text(&mut app);
-        assert!(text.contains("sharp bank vs. the real recurrent culture"));
+        assert!(text.contains("pure reflex — no memory, aims sharp"));
         assert!(text.contains("reproducible run: game + culture wiring + noise"));
         assert!(text.contains("ViZDoom map"));
+
+        // Toggling the substrate re-glosses it in plain language.
+        app.train_substrate = Substrate::Reservoir;
+        let text = render_text(&mut app);
+        assert!(text.contains("the real culture — recurrent, has memory"));
     }
 
     #[test]

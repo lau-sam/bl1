@@ -17,8 +17,8 @@ use ratatui::widgets::{
 use bl1_games::{DoomState, EnvView, PongState};
 
 use crate::app::{
-    App, DOOM_SCENARIOS, DoomSession, Focus, GameChoice, MenuField, RunResult, Tab, TrainScreen,
-    substrate_label,
+    App, DOOM_SCENARIOS, DoomSession, Focus, GameChoice, MenuField, RunResult, Substrate, Tab,
+    TrainScreen, substrate_label,
 };
 
 const CYAN: Color = Color::Cyan;
@@ -681,6 +681,12 @@ fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
         "— (real Doom only)"
     };
     let substrate_val = substrate_label(app.train_substrate);
+    // Plain-language gloss of the *current* substrate, so a newcomer learns what
+    // the term means just by toggling it — no README needed.
+    let substrate_hint = match app.train_substrate {
+        Substrate::Feedforward => "pure reflex — no memory, aims sharp",
+        Substrate::Reservoir => "the real culture — recurrent, has memory",
+    };
     let seed_val = app.train_seed.to_string();
 
     // Each row carries a short inline hint (shown greyed after the value) so every
@@ -692,7 +698,7 @@ fn draw_train_menu(frame: &mut Frame, app: &App, area: Rect) {
             "Substrate",
             substrate_val.to_string(),
             true,
-            "sharp bank vs. the real recurrent culture",
+            substrate_hint,
         ),
         (
             MenuField::Control,
