@@ -584,6 +584,56 @@ coarse sensory/motor map — not a full-campaign agent. Tune learning from the c
 `bl1-brain`'s `--learning-rate`, `--explore-decay`, and `--explore-min` flags. ViZDoom needs a display
 (or headless SDL) and is installed separately.
 
+## References
+
+BL-1's design draws on published work. The distinction matters: some parts replicate a paper's
+method, others are engineering choices we make no scientific claim about.
+
+**Closed-loop paradigm.** The game loop — a culture embodied in a game, sensing a place code and
+receiving predictable feedback on success, unpredictable feedback on failure — replicates DishBrain:
+
+- Kagan, B.J., et al. (2022). *In vitro neurons learn and exhibit sentience when embodied in a
+  simulated game-world.* **Neuron** 110(23):3952–3969.
+  [10.1016/j.neuron.2022.09.001](https://www.cell.com/neuron/fulltext/S0896-6273(22)00806-6)
+  — the hit/miss feedback contract in `encoding.rs` / `feedback.rs` / `doom.rs`. DishBrain itself has
+  **no reinforcement-learning rate or exploration schedule**: learning is the culture's own plasticity
+  under the free-energy principle.
+
+**Learning rule.** The multi-head linear readout trained online by reward-modulated node perturbation
+mirrors the closest spiking-hardware analog (32-in / 32-out R-STDP playing Pong):
+
+- Wunderlich, T., et al. (2019). *Demonstrating Advantages of Neuromorphic Computation: A Pilot
+  Study.* **Frontiers in Neuroscience** 13:260.
+  [10.3389/fnins.2019.00260](https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2019.00260/full)
+  — uses learning rate β=0.125, reward baseline as an EWMA (γ=0.5), and **constant exploration** (no
+  annealing). BL-1's `learning_rate` / `reward_alpha` are in this family; see the honesty note below.
+- Williams, R.J. (1992). *Simple statistical gradient-following algorithms for connectionist
+  reinforcement learning.* **Machine Learning** 8:229–256 (REINFORCE).
+- Fiete, I.R., & Seung, H.S. (2006). *Gradient learning in spiking neural networks by dynamic
+  perturbation of conductances.* **Physical Review Letters** 97:048104 (node perturbation).
+
+**Substrate as reservoir.** Using the recurrent culture as a fixed reservoir and training only the
+readout is reservoir computing:
+
+- Maass, W., Natschläger, T., & Markram, H. (2002). *Real-time computing without stable states.*
+  **Neural Computation** 14(11):2531–2560 (liquid state machines).
+- Jaeger, H. (2001). *The "echo state" approach to analysing and training recurrent neural networks.*
+  **GMD Report** 148 (echo state networks).
+
+**Bio-validation target.** The simulator is calibrated and validated against:
+
+- Wagenaar, D.A., Pine, J., & Potter, S.M. (2006). *An extremely rich repertoire of bursting patterns
+  during the development of cortical cultures.* **BMC Neuroscience** 7:11
+  ([10.1186/1471-2202-7-11](https://doi.org/10.1186/1471-2202-7-11)) — the burst / IBI metrics in
+  `configs/wagenaar_calibrated.yaml` (6/6 metrics).
+
+> **Honesty note on hyperparameters.** The learning rule and its architecture are paper-grounded
+> (Wunderlich 2019). The **exploration schedule** (`--explore-decay` / `--explore-min`, a decaying
+> action noise) is **not** from any paper — Wunderlich and DishBrain both use *constant* exploration.
+> It is an engineering default, and its collapse-to-zero is why the recurrent-culture reservoir can
+> freeze at 0 kills. The game **kill/episode score is a demo metric**, not a validated benchmark; the
+> validated science is the Wagenaar burst/criticality suite.
+
 ## License
 
 BL-1 is released under the [MIT License](LICENSE).
