@@ -87,13 +87,9 @@ struct Cli {
     #[arg(long, default_value_t = 0.05)]
     learning_rate: f32,
 
-    /// Steps over which policy exploration decays from its start to its floor.
-    #[arg(long, default_value_t = 20000)]
-    explore_decay: usize,
-
-    /// Exploration floor (kept > 0 so the culture keeps refining, not freezing).
-    #[arg(long, default_value_t = 0.08)]
-    explore_min: f32,
+    /// Constant policy exploration noise σ (never decays, so it can't freeze).
+    #[arg(long, default_value_t = 0.25)]
+    explore: f32,
 
     /// Load a saved readout from this file at startup (if it exists and matches).
     #[arg(long, value_name = "PATH")]
@@ -117,8 +113,7 @@ fn main() -> Result<()> {
         n_input: cli.inputs,
         n_heads: cli.actions,
         learning_rate: cli.learning_rate,
-        explore_decay_steps: cli.explore_decay,
-        explore_min: cli.explore_min,
+        explore_sigma: cli.explore,
         ..BrainParams::default()
     };
     let mut brain = RemoteBrain::new(params, substrate, cli.seed);

@@ -581,8 +581,8 @@ Doom engine, over the same node-perturbation rule that plays Pong. It **works** 
 `defend_the_center` the culture climbs from ~1 to ~4 kills per episode over ~80 episodes (verified
 headless). It targets aim-and-shoot scenarios (`defend_the_center`, `basic`) that fit the culture's
 coarse sensory/motor map — not a full-campaign agent. Tune learning from the client via
-`bl1-brain`'s `--learning-rate`, `--explore-decay`, and `--explore-min` flags. ViZDoom needs a display
-(or headless SDL) and is installed separately.
+`bl1-brain`'s `--learning-rate` and `--explore` (constant exploration noise) flags. ViZDoom needs a
+display (or headless SDL) and is installed separately.
 
 ## References
 
@@ -628,11 +628,12 @@ readout is reservoir computing:
   `configs/wagenaar_calibrated.yaml` (6/6 metrics).
 
 > **Honesty note on hyperparameters.** The learning rule and its architecture are paper-grounded
-> (Wunderlich 2019). The **exploration schedule** (`--explore-decay` / `--explore-min`, a decaying
-> action noise) is **not** from any paper — Wunderlich and DishBrain both use *constant* exploration.
-> It is an engineering default, and its collapse-to-zero is why the recurrent-culture reservoir can
-> freeze at 0 kills. The game **kill/episode score is a demo metric**, not a validated benchmark; the
-> validated science is the Wagenaar burst/criticality suite.
+> (Wunderlich 2019). Exploration is **constant** (`--explore`), as in Wunderlich and DishBrain — an
+> earlier decaying schedule had no basis in either paper and let the recurrent-culture reservoir
+> freeze at 0 kills once its noise floor dropped below the action threshold. The exploration
+> *magnitude* remains an engineering scale (Wunderlich's fixed σ is hardware-specific). The game
+> **kill/episode score is a demo metric**, not a validated benchmark; the validated science is the
+> Wagenaar burst/criticality suite.
 
 ## License
 

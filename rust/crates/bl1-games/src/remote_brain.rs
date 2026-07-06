@@ -46,12 +46,13 @@ pub struct RemoteBrainState {
     pub step_idx: usize,
 }
 
-/// Tunables for the remote brain (shared learning + exploration schedule).
+/// Tunables for the remote brain (shared learning + exploration).
 ///
 /// The learning rule (reward-modulated node perturbation on a linear readout)
-/// follows Wunderlich et al. 2019, *Front. Neurosci.* 13:260. Which knobs are
-/// paper-grounded and which are engineering defaults is called out per field —
-/// see also the README "Honesty note on hyperparameters".
+/// follows Wunderlich et al. 2019, *Front. Neurosci.* 13:260. Exploration is
+/// **constant**, as in Wunderlich (fixed Gaussian noise) and DishBrain — no
+/// annealing schedule, which has no basis in either paper and, worse, lets the
+/// policy freeze once its noise floor drops below the action threshold.
 #[derive(Debug, Clone)]
 pub struct BrainParams {
     /// Observation length = substrate input bands.
@@ -64,15 +65,11 @@ pub struct BrainParams {
     pub learning_rate: f32,
     /// EWMA rate for the reward baseline (Wunderlich uses γ=0.5; ours is slower).
     pub reward_alpha: f32,
-    /// Initial exploration noise σ. NOT paper-derived: Wunderlich and DishBrain
-    /// both use *constant* exploration, no annealing.
-    pub explore0: f32,
-    /// Exploration floor. Engineering default; a floor of 0 lets the policy
-    /// freeze (never explores again) — the reservoir's stuck-at-0 failure mode.
-    pub explore_min: f32,
-    /// Steps over which σ decays from `explore0` to `explore_min`. Engineering
-    /// default; the whole annealing schedule has no basis in the cited papers.
-    pub explore_decay_steps: usize,
+    /// Constant exploration noise σ on the policy (never decays). Engineering
+    /// scale — Wunderlich's fixed σ is hardware-specific, so only *constant-ness*
+    /// is paper-grounded, not the magnitude. Kept > 0 so the policy can always
+    /// re-explore and never freezes.
+    pub explore_sigma: f32,
 }
 
 impl Default for BrainParams {
@@ -83,9 +80,7 @@ impl Default for BrainParams {
             input_amp: 12.0,
             learning_rate: 0.05,
             reward_alpha: 0.05,
-            explore0: 0.3,
-            explore_min: 0.05,
-            explore_decay_steps: 5000,
+            explore_sigma: 0.25,
         }
     }
 }
@@ -161,8 +156,9 @@ impl RemoteBrain {
         let x: Vec<f32> = self.substrate.encode(&self.scratch_bump, &mut self.rng).to_vec();
 
         // 3. Sample each head's Gaussian policy; remember the perturbation.
-        let frac = (self.step_idx as f32 / self.p.explore_decay_steps as f32).min(1.0);
-        let sigma = self.p.explore0 + (self.p.explore_min - self.p.explore0) * frac;
+        // Constant exploration (Wunderlich 2019): the noise never decays, so the
+        // policy can always re-explore and never freezes at a dead action.
+        let sigma = self.p.explore_sigma;
         let mut actions = vec![0.0f32; self.p.n_heads];
         for m in 0..self.p.n_heads {
             let mu: f32 = self.b[m] + self.w[m].iter().zip(&x).map(|(w, xi)| w * xi).sum::<f32>();
@@ -227,7 +223,6 @@ mod tests {
         let p = BrainParams {
             n_input: n,
             n_heads: 1,
-            explore_decay_steps: 3000,
             ..BrainParams::default()
         };
         let substrate = Box::new(FeedForwardBank::new(n, 16, 40, 0.5));
