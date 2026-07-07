@@ -843,16 +843,19 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
 
     let total_kills: u32 = s.kills.iter().sum();
     let best_kills = s.kills.iter().copied().max().unwrap_or(0);
-    // Show the per-episode ceiling (starting ammo) once the bridge reports it.
-    let best_str = if s.ammo_cap > 0 {
+    // Ammo only bounds the episode when it's actually spent (shots > 0). Some
+    // scenarios (e.g. defend_the_line) give effectively unlimited ammo — there the
+    // ceiling is survival, not bullets, so we drop the ammo framing and accuracy.
+    let ammo_limited = s.shots > 0;
+    let best_str = if ammo_limited && s.ammo_cap > 0 {
         format!("best {best_kills}/{} ammo", s.ammo_cap)
     } else {
         format!("best {best_kills}")
     };
-    let accuracy = if s.shots > 0 {
-        100.0 * total_kills as f64 / s.shots as f64
+    let acc_str = if ammo_limited {
+        format!(" · accuracy {:.0}%", 100.0 * total_kills as f64 / s.shots as f64)
     } else {
-        0.0
+        String::new()
     };
     let stats = if s.kills.is_empty() {
         vec![Line::from(Span::styled(
@@ -863,21 +866,30 @@ fn draw_doom_monitor(frame: &mut Frame, s: &DoomSession, area: Rect) {
         vec![
             Line::from(Span::styled(
                 format!(
-                    "episode {}   {} kills total · mean {:.2}/ep · {} · last {} · accuracy {:.0}%",
+                    "episode {}   {} kills total · mean {:.2}/ep · {} · last {}{}",
                     s.kills.len(),
                     total_kills,
                     s.mean_kills(),
                     best_str,
                     s.kills.last().copied().unwrap_or(0),
-                    accuracy,
+                    acc_str,
                 ),
                 Style::default().fg(Color::Gray),
             )),
             Line::from(Span::styled(
-                format!(
-                    "this session: {} frames · {} shots   ·   lifetime: {} frames (across sessions)",
-                    s.frames, s.shots, s.lifetime_frames,
-                ),
+                {
+                    // Only report bullets on ammo-limited scenarios; unlimited-ammo
+                    // ones report 0, which reads as "never fired" — omit it there.
+                    let shots_str = if ammo_limited {
+                        format!(" · {} shots", s.shots)
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "this session: {} frames{}   ·   lifetime: {} frames (across sessions)",
+                        s.frames, shots_str, s.lifetime_frames,
+                    )
+                },
                 Style::default().fg(Color::DarkGray),
             )),
         ]
