@@ -78,6 +78,50 @@ def converged_mean(kills: list[int], window: int) -> tuple[float, float, bool]:
     return m_last, m_prev, stationary
 
 
+def escape_episode(kills: list[int], window: int, roll: int = 50, frac: float = 0.8) -> int | None:
+    """Episode at which learning first reaches (and holds) `frac` of the plateau.
+
+    Plateau = mean of the last `window` eps. Escape = first episode where the
+    trailing `roll`-episode rolling mean is >= frac*plateau and stays >= that for
+    the rest of the run — i.e. the point it climbs out of the low (wall-lock)
+    regime for good. Returns None if it never sustains the level.
+    """
+    plateau = statistics.fmean(kills[-window:])
+    thresh = frac * plateau
+    rmean = [statistics.fmean(kills[max(0, i - roll + 1) : i + 1]) for i in range(len(kills))]
+    for i in range(len(kills)):
+        if rmean[i] >= thresh and min(rmean[i:]) >= thresh:
+            return i + 1  # 1-indexed episode
+    return None
+
+
+def convergence(out: Path, window: int) -> None:
+    """Report time-to-escape (convergence speed) per substrate, across seeds."""
+    logs = sorted(out.glob("*_seed*.log"))
+    groups: dict[tuple[str, str], list[tuple[int, int | None]]] = {}
+    for log in logs:
+        head, seedtok = log.stem.rsplit("_", 1)
+        scen, _, sub = head.rpartition("_")
+        seed = int(seedtok[4:])
+        kills = kills_from_log(log)
+        if not kills:
+            continue
+        groups.setdefault((scen, sub), []).append((seed, escape_episode(kills, window)))
+
+    print(f"\nConvergence speed — episode reaching & holding 80% of the plateau\n")
+    print(f"{'scenario':<20} {'substrate':<14} {'median':<8} {'mean±std':<14} per-seed")
+    print("-" * 82)
+    for (scen, sub) in sorted(groups):
+        rows = sorted(groups[(scen, sub)])
+        eps = [e for _, e in rows if e is not None]
+        med = statistics.median(eps) if eps else float("nan")
+        std = statistics.pstdev(eps) if len(eps) > 1 else 0.0
+        mean = statistics.fmean(eps) if eps else float("nan")
+        per = " ".join(f"s{sd}={e if e is not None else 'never'}" for sd, e in rows)
+        print(f"{scen:<20} {sub:<14} {med:<8.0f} {mean:.0f}±{std:.0f}".ljust(56) + f"  {per}")
+    print()
+
+
 def analyse(out: Path, window: int) -> None:
     logs = sorted(out.glob("*.log"))
     if not logs:
@@ -125,10 +169,16 @@ def main() -> None:
     ap.add_argument("--window", type=int, default=100, help="converged window (eps)")
     ap.add_argument("--out", default=None, help="output dir for logs + brains")
     ap.add_argument("--analyze-only", action="store_true")
+    ap.add_argument("--convergence", action="store_true",
+                    help="report convergence speed (time-to-escape) from existing logs")
     args = ap.parse_args()
 
     out = Path(args.out) if args.out else REPO / "results" / "doom_compare"
     out.mkdir(parents=True, exist_ok=True)
+
+    if args.convergence:
+        convergence(out, args.window)
+        return
 
     if not args.analyze_only:
         seeds = [int(s) for s in args.seeds.split(",")]
