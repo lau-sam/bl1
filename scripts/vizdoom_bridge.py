@@ -145,8 +145,14 @@ def main() -> None:
     game.set_window_visible(not args.no_window)
     # We drive our own buttons: turn left, turn right, attack.
     game.set_available_buttons([vzd.Button.TURN_LEFT, vzd.Button.TURN_RIGHT, vzd.Button.ATTACK])
+    # SELECTED_WEAPON_AMMO tracks the *current* weapon's ammo whatever its type,
+    # so bullet counting works across scenarios (AMMO2 is only the pistol's slot).
     game.set_available_game_variables(
-        [vzd.GameVariable.HEALTH, vzd.GameVariable.KILLCOUNT, vzd.GameVariable.AMMO2]
+        [
+            vzd.GameVariable.HEALTH,
+            vzd.GameVariable.KILLCOUNT,
+            vzd.GameVariable.SELECTED_WEAPON_AMMO,
+        ]
     )
     game.set_seed(args.seed)
     game.init()
@@ -192,7 +198,7 @@ def main() -> None:
             prev_reward = 0.0
             prev_kills = 0.0
             prev_health = 100.0
-            start_ammo = game.get_game_variable(vzd.GameVariable.AMMO2)
+            start_ammo = game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)
             prev_ammo = start_ammo
             while not game.is_episode_finished():
                 state = game.get_state()
@@ -208,7 +214,7 @@ def main() -> None:
                 frames += 1
                 # Count bullets actually spent (AMMO2 dropped), so accuracy reflects
                 # real shots, not trigger pulls with an empty clip.
-                ammo = game.get_game_variable(vzd.GameVariable.AMMO2)
+                ammo = game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)
                 shots += int(max(0.0, prev_ammo - ammo))
                 prev_ammo = ammo
 
